@@ -36831,11 +36831,11 @@ async function autoCommitAndPushIfChanged() {
                 branch: github.context.ref.replace('refs/heads/', ''),
                 committer: {
                     name: 'github-actions[bot]',
-                    email: '41898282+github-actions[bot]@users.noreply.github.com',
+                    email: 'github-actions@github.com',
                 },
                 author: {
                     name: 'github-actions[bot]',
-                    email: '41898282+github-actions[bot]@users.noreply.github.com',
+                    email: 'github-actions@github.com',
                 },
             });
             core.info('File created and committed.');
@@ -36872,6 +36872,7 @@ async function run() {
         const updatedSpecs = updateSpecs(specs, changes);
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });
+        core.info(`Updated YAML: ${updatedYaml}`);
         fs.writeFileSync(CONFIG_PATH, updatedYaml);
         await autoCommitAndPushIfChanged();
         core.info('Successfully updated openapi-sync.yml');

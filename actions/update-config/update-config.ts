@@ -117,8 +117,8 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
     const octokit = github.getOctokit(token);
   
   // Check if we're in a PR from a fork
-  const isFork =
-    github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
+    const isFork =
+        github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
 
   if (isFork) {
     core.warning('Skipping commit: PR is from a fork and push is not allowed.');
@@ -177,11 +177,11 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
         branch: github.context.ref.replace('refs/heads/', ''),
         committer: {
           name: 'github-actions[bot]',
-          email: '41898282+github-actions[bot]@users.noreply.github.com',
+          email: 'github-actions@github.com',
         },
         author: {
           name: 'github-actions[bot]',
-          email: '41898282+github-actions[bot]@users.noreply.github.com',
+          email: 'github-actions@github.com',
         },
       });
       
@@ -227,6 +227,7 @@ async function run(): Promise<void> {
     syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
 
     const updatedYaml = yaml.dump(config, { lineWidth: -1 });
+    core.info(`Updated YAML: ${updatedYaml}`);
     fs.writeFileSync(CONFIG_PATH, updatedYaml);
 
     await autoCommitAndPushIfChanged();
