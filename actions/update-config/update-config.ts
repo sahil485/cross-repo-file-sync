@@ -110,7 +110,7 @@ type FileData = {
 };
 
 async function autoCommitAndPushIfChanged(): Promise<void> {
-    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
+    const token = process.env.GITHUB_TOKEN;
     if (!token) {
         throw new Error('GitHub token is required');
     }
@@ -231,7 +231,7 @@ async function run(): Promise<void> {
     fs.writeFileSync(CONFIG_PATH, updatedYaml);
     core.info(`File written to ${CONFIG_PATH}`);
     await autoCommitAndPushIfChanged();
-    
+
     core.info('Successfully updated openapi-sync.yml');
   } catch (error: any) {
     core.setFailed(error.message);

@@ -36773,7 +36773,7 @@ function updateSpecs(specs, changes) {
     return updated;
 }
 async function autoCommitAndPushIfChanged() {
-    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
+    const token = process.env.GITHUB_TOKEN;
     if (!token) {
         throw new Error('GitHub token is required');
     }
