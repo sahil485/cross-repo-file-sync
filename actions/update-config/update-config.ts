@@ -40,6 +40,8 @@ async function getDiffFiles(baseRef: string): Promise<DiffFile[]> {
     base: baseRef,
     head: headSha,
   });
+
+  core.info(`Compare data: ${JSON.stringify(compareData)}`);
   
   // Transform the files data into the format we need
   return compareData.files?.map((file: FileEntry) => {
@@ -209,9 +211,7 @@ async function run(): Promise<void> {
     const openapiMapping = config?.jobs?.sync?.steps?.find(
         (step: any) => step.with?.openapi
     )?.with?.openapi;
-      
-    core.info(`OpenAPI: ${JSON.stringify(openapiMapping)}`);
-      
+            
     if (!openapiMapping) {
       core.setFailed('Missing openapi block in sync job');
       return;

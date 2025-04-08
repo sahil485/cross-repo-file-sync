@@ -36720,6 +36720,7 @@ async function getDiffFiles(baseRef) {
         base: baseRef,
         head: headSha,
     });
+    core.info(`Compare data: ${JSON.stringify(compareData)}`);
     // Transform the files data into the format we need
     return compareData.files?.map((file) => {
         const status = file.status;
@@ -36856,7 +36857,6 @@ async function run() {
         const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
         const config = yaml.load(configRaw);
         const openapiMapping = config?.jobs?.sync?.steps?.find((step) => step.with?.openapi)?.with?.openapi;
-        core.info(`OpenAPI: ${JSON.stringify(openapiMapping)}`);
         if (!openapiMapping) {
             core.setFailed('Missing openapi block in sync job');
             return;
