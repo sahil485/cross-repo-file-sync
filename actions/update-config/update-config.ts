@@ -205,21 +205,20 @@ async function run(): Promise<void> {
 
     const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
     const config = yaml.load(configRaw) as Record<string, any>;
-    core.info(`Jobs: ${JSON.stringify(config?.jobs)}`);
-    core.info(`Sync: ${JSON.stringify(config?.jobs?.sync)}`);
-    core.info(`With: ${JSON.stringify(config?.jobs?.sync?.with)}`);
-    core.info(`OpenAPI: ${JSON.stringify(config?.jobs?.sync?.with?.openapi)}`);
-    if (!config?.jobs?.sync?.with?.openapi) {
+
+    const openapiMapping = config?.jobs?.sync?.steps?.find(
+        (step: any) => step.with?.openapi
+    )?.with?.openapi;
+      
+    core.info(`OpenAPI: ${JSON.stringify(openapiMapping)}`);
+      
+    if (!openapiMapping) {
       core.setFailed('Missing openapi block in sync job');
       return;
     }
 
     const changes = await getDiffFiles(baseRef);
-    const openapiBlock = config.jobs.sync.with.openapi;
-    core.info(`Changes: ${JSON.stringify(changes)}`);
-    core.info(`OpenAPI block: ${openapiBlock}`);
-    return
-    const specs = parseOpenAPIBlock(openapiBlock);
+    const specs = parseOpenAPIBlock(openapiMapping);
     const updatedSpecs = updateSpecs(specs, changes);
 
     config.jobs.sync.with.openapi = formatOpenAPIBlock(updatedSpecs);
