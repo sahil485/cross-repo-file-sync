@@ -157,12 +157,12 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
       sha: fileSha,
       branch: github.context.ref.replace('refs/heads/', ''),
       committer: {
-        name: 'github-actions[bot]',
-        email: '41898282+github-actions[bot]@users.noreply.github.com',
+        name: 'github-actions',
+        email: 'github-actions@github.com',
       },
       author: {
-        name: 'github-actions[bot]',
-        email: '41898282+github-actions[bot]@users.noreply.github.com',
+        name: 'github-actions',
+        email: 'github-actions@github.com',
       },
     });
     core.info("HERE4")
@@ -179,11 +179,11 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
         content: Buffer.from(content).toString('base64'),
         branch: github.context.ref.replace('refs/heads/', ''),
         committer: {
-          name: 'github-actions[bot]',
+          name: 'github-actions',
           email: 'github-actions@github.com',
         },
         author: {
-          name: 'github-actions[bot]',
+          name: 'github-actions',
           email: 'github-actions@github.com',
         },
       });
