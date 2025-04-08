@@ -60,7 +60,11 @@ export async function run(): Promise<void> {
     
     const createPR = await copyOpenAPIFiles(options);
     
-    // await createPullRequest(options);
+    if (createPR) {
+      await createPullRequest(options);
+    } else {
+      core.info('Source files not found. Skipping pull request creation.');
+    }
     
   } catch (error) {
     if (error instanceof Error) {
