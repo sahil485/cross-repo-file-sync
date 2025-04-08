@@ -227,11 +227,11 @@ async function run(): Promise<void> {
     syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
 
     const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-    core.info(`Updated YAML: ${updatedYaml}`);
+    core.info(`Updated YAML:\n${updatedYaml}`);
     fs.writeFileSync(CONFIG_PATH, updatedYaml);
-
+    core.info(`File written to ${CONFIG_PATH}`);
     await autoCommitAndPushIfChanged();
-
+    
     core.info('Successfully updated openapi-sync.yml');
   } catch (error: any) {
     core.setFailed(error.message);
