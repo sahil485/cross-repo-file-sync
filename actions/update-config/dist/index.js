@@ -36778,7 +36778,6 @@ async function autoCommitAndPushIfChanged() {
         throw new Error('GitHub token is required');
     }
     const octokit = github.getOctokit(token);
-    // Check if we're in a PR from a fork
     const isFork = github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
     if (isFork) {
         core.warning('Skipping commit: PR is from a fork and push is not allowed.');
@@ -36786,7 +36785,6 @@ async function autoCommitAndPushIfChanged() {
     }
     // Read the file content
     const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    core.info("HERE1");
     try {
         // Get the current file to check if it exists and get its SHA
         const response = await octokit.rest.repos.getContent({
@@ -36795,15 +36793,11 @@ async function autoCommitAndPushIfChanged() {
             path: CONFIG_PATH,
             ref: github.context.sha,
         });
-        core.info("HERE2");
         const fileData = response.data;
         if (fileData.type !== 'file') {
             throw new Error('Path exists but is not a file');
         }
         const fileSha = fileData.sha;
-        core.info("HERE3");
-        core.info(github.context.repo.owner);
-        core.info(github.context.repo.repo);
         // Update the file
         await octokit.rest.repos.createOrUpdateFileContents({
             owner: github.context.repo.owner,

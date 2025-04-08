@@ -116,7 +116,6 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
     }
     const octokit = github.getOctokit(token);
   
-  // Check if we're in a PR from a fork
     const isFork =
         github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
 
@@ -127,7 +126,6 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
   
   // Read the file content
   const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-  core.info("HERE1")
   try {
     // Get the current file to check if it exists and get its SHA
     const response = await octokit.rest.repos.getContent({
@@ -136,7 +134,6 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
       path: CONFIG_PATH,
       ref: github.context.sha,
     });
-    core.info("HERE2")
     
     const fileData = response.data as FileData;
     
@@ -145,10 +142,6 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
     }
     
     const fileSha = fileData.sha;
-    core.info("HERE3")
-
-    core.info(github.context.repo.owner)
-    core.info(github.context.repo.repo)
     // Update the file
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: github.context.repo.owner,
