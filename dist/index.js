@@ -167,7 +167,6 @@ async function copyOpenAPIFiles(options) {
     }
     return fileUpdated;
 }
-// Check if a branch exists in the remote repository
 async function branchExists(owner, repo, branchName, octokit) {
     try {
         await octokit.rest.git.getRef({
@@ -178,21 +177,19 @@ async function branchExists(owner, repo, branchName, octokit) {
         return true;
     }
     catch (error) {
-        return false; // Assume any error means branch doesn't exist
+        return false;
     }
 }
-// Set up the branch (create or update)
 async function setupBranch(branchName, exists) {
     if (exists) {
-        core.info(`Branch ${branchName} exists. Updating it.`);
-        await exec.exec('git', ['checkout', '-b', branchName, 'origin/main']);
+        core.info(`Branch ${branchName} exists. Checking it out.`);
+        await exec.exec('git', ['checkout', branchName]);
     }
     else {
         core.info(`Branch ${branchName} does not exist. Creating it.`);
         await exec.exec('git', ['checkout', '-b', branchName]);
     }
 }
-// Check for and commit changes
 async function commitChanges() {
     const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
     if (!diff.stdout.trim()) {
@@ -203,7 +200,6 @@ async function commitChanges() {
     await exec.exec('git', ['commit', '-m', 'Update OpenAPI specifications']);
     return true;
 }
-// Push changes to the branch
 async function pushChanges(branchName) {
     try {
         await exec.exec('git', ['push', '--force', 'origin', branchName]);
@@ -272,16 +268,12 @@ async function createPullRequest(options) {
     const [owner, repo] = options.repository.split('/');
     const branchName = options.branch;
     try {
-        // Check if branch exists and set it up
         const doesBranchExist = await branchExists(owner, repo, branchName, octokit);
         await setupBranch(branchName, doesBranchExist);
-        // Commit changes if there are any
         const hasChanges = await commitChanges();
         if (!hasChanges)
             return;
-        // Push changes to the branch
         await pushChanges(branchName);
-        // Handle PR (create or update)
         const existingPRNumber = await prExists(owner, repo, branchName, octokit);
         let prNumber;
         if (existingPRNumber) {
@@ -292,7 +284,6 @@ async function createPullRequest(options) {
             const prResponse = await createPR(octokit, owner, repo, branchName);
             prNumber = prResponse.data.number;
         }
-        // Auto-merge if configured
         if (options.autoMerge) {
             await autoMergePR(octokit, owner, repo, prNumber);
         }
