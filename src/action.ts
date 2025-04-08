@@ -58,14 +58,7 @@ export async function run(): Promise<void> {
     };    
     await cloneRepository(options);
     
-    // const createPR = await copyOpenAPIFiles(options);
-    
-    // if (createPR) {
-      await createPullRequest(options);
-    // } else {
-    //   core.info('Source files not found. Skipping pull request creation.');
-    // }
-    
+    await createPullRequest(options);
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);
@@ -122,26 +115,6 @@ async function cloneRepository(options: SyncOptions): Promise<void> {
   await exec.exec('git', ['config', 'user.email', 'github-actions@github.com']);
 }
 
-async function copyOpenAPIFiles(options: SyncOptions): Promise<void> {
-    core.info('Copying OpenAPI files to destination locations');
-    
-    const sourceRepoRoot = path.resolve(process.env.GITHUB_WORKSPACE || '');
-    const destRepoRoot = path.resolve('.');
-    
-    for (const mapping of options.openapi) {
-      const sourcePath = path.join(sourceRepoRoot, mapping.source);
-      const destPath = path.join(destRepoRoot, mapping.destination);
-            
-      if (!fs.existsSync(sourcePath)) {
-        core.info(`Skipping ${mapping.source} (not found)`);
-      } else {
-        await io.mkdirP(path.dirname(destPath));
-        fs.copyFileSync(sourcePath, destPath);
-    }
-  }
-}
-
-// Main function
 async function createPullRequest(options: SyncOptions): Promise<void> {
   if (!options.token) {
     core.warning('GitHub token not provided. Skipping PR creation.');
@@ -205,6 +178,25 @@ async function setupBranch(branchName: string, exists: boolean): Promise<void> {
   }
 }
 
+async function copyOpenAPIFiles(options: SyncOptions): Promise<void> {
+  core.info('Copying OpenAPI files to destination locations');
+  
+  const sourceRepoRoot = path.resolve(process.env.GITHUB_WORKSPACE || '');
+  const destRepoRoot = path.resolve('.');
+  
+  for (const mapping of options.openapi) {
+    const sourcePath = path.join(sourceRepoRoot, mapping.source);
+    const destPath = path.join(destRepoRoot, mapping.destination);
+          
+    if (!fs.existsSync(sourcePath)) {
+      core.info(`Skipping ${mapping.source} (not found)`);
+    } else {
+      await io.mkdirP(path.dirname(destPath));
+      fs.copyFileSync(sourcePath, destPath);
+    }
+  }
+}
+
 async function commitChanges(): Promise<boolean> {
   const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
   
@@ -221,15 +213,12 @@ async function commitChanges(): Promise<boolean> {
 // Check if there are differences between current branch and remote branch
 async function hasDifferenceWithRemote(branchName: string): Promise<boolean> {
   try {
-    // Fetch the latest from remote
     await exec.exec('git', ['fetch', 'origin', branchName]);
     
-    // Compare local branch with remote branch
     const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`]);
     
     return !!diff.stdout.trim();
   } catch (error) {
-    // If fetch fails, it's likely because the branch doesn't exist remotely yet
     core.info(`Could not fetch remote branch, assuming first push: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return true;
   }
