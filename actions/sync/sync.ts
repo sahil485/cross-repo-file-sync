@@ -134,7 +134,8 @@ async function createPullRequest(options: SyncOptions): Promise<void> {
     const hasChanges = await commitChanges();
     if (!hasChanges) return;
     
-    await pushChanges(branchName);
+    const pushedChanges = await pushChanges(branchName);
+    if (!pushedChanges) return;
     
     const existingPRNumber = await prExists(owner, repo, branchName, octokit);
     
@@ -224,7 +225,7 @@ async function hasDifferenceWithRemote(branchName: string): Promise<boolean> {
   }
 }
 
-async function pushChanges(branchName: string): Promise<void> {
+async function pushChanges(branchName: string): Promise<boolean> {
   try {
     // Only force push if there are differences with the remote
     const shouldPush = await hasDifferenceWithRemote(branchName);
@@ -235,6 +236,8 @@ async function pushChanges(branchName: string): Promise<void> {
     } else {
       core.info(`No differences with remote branch. Skipping push.`);
     }
+
+    return shouldPush;
   } catch (error) {
     throw new Error(`Failed to push changes to the repository: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
