@@ -149,16 +149,12 @@ async function copyOpenAPIFiles(options) {
     for (const mapping of options.openapi) {
         const sourcePath = path.join(sourceRepoRoot, mapping.source);
         const destPath = path.join(destRepoRoot, mapping.destination);
-        core.info(`Checking for source file: ${sourcePath}`);
         if (!fs.existsSync(sourcePath)) {
-            core.info(`Source file not found: ${mapping.source}`);
-            core.info(`Skipping ${mapping.source}`);
+            core.info(`Skipping ${mapping.source} (not found)`);
         }
         else {
-            core.info(`Copying ${sourcePath} to ${destPath}`);
             await io.mkdirP(path.dirname(destPath));
             fs.copyFileSync(sourcePath, destPath);
-            core.info(`Copied ${sourcePath} to ${destPath}`);
         }
     }
 }
