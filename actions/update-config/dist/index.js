@@ -36723,8 +36723,6 @@ async function getDiffFiles(baseRef) {
     // Transform the files data into the format we need
     return compareData.files?.map((file) => {
         const status = file.status;
-        core.info(`File: ${file.filename}`);
-        core.info(`Status: ${status}`);
         if (status === 'removed') {
             return ['D', file.filename];
         }
@@ -36867,9 +36865,6 @@ async function run() {
         }
         const changes = await getDiffFiles(baseRef);
         const specs = parseOpenAPIBlock(openapiMapping);
-        core.info(`Changes: ${JSON.stringify(changes)}`);
-        core.info(`Specs: ${JSON.stringify(specs)}`);
-        return;
         const updatedSpecs = updateSpecs(specs, changes);
         config.jobs.sync.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });

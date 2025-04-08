@@ -15,7 +15,7 @@ type OpenAPISpec = {
 type FileStatus = 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
 type DiffFile =
   | ['D', string]                         
-  | ['R', string, string]           
+  | ['R', string, string]
   | undefined;
 
 type CompareCommitsResponse = RestEndpointMethodTypes['repos']['compareCommits']['response'];
@@ -44,10 +44,6 @@ async function getDiffFiles(baseRef: string): Promise<DiffFile[]> {
   // Transform the files data into the format we need
   return compareData.files?.map((file: FileEntry) => {
     const status = file.status as FileStatus;
-    
-    core.info(`File: ${file.filename}`);
-    core.info(`Status: ${status}`);
-    
     if (status === 'removed') {
       return ['D', file.filename];
     } else if (status === 'renamed') {
@@ -223,10 +219,6 @@ async function run(): Promise<void> {
 
     const changes = await getDiffFiles(baseRef);
     const specs = parseOpenAPIBlock(openapiMapping);
-
-    core.info(`Changes: ${JSON.stringify(changes)}`);
-    core.info(`Specs: ${JSON.stringify(specs)}`);
-    return
     const updatedSpecs = updateSpecs(specs, changes);
 
     config.jobs.sync.with.openapi = formatOpenAPIBlock(updatedSpecs);
