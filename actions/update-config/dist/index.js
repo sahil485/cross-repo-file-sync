@@ -36720,10 +36720,11 @@ async function getDiffFiles(baseRef) {
         base: baseRef,
         head: headSha,
     });
-    core.info(`Compare data: ${JSON.stringify(compareData)}`);
     // Transform the files data into the format we need
     return compareData.files?.map((file) => {
         const status = file.status;
+        core.info(`File: ${file.filename}`);
+        core.info(`Status: ${status}`);
         if (status === 'removed') {
             return ['D', file.filename];
         }
