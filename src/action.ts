@@ -153,96 +153,123 @@ async function copyOpenAPIFiles(options: SyncOptions): Promise<boolean> {
   return fileUpdated;
 }
 
-async function createPullRequest(options: SyncOptions): Promise<void> {
-  // Check if branch exists
-  const branchExists = await exec.getExecOutput('git', ['show-ref', '--verify', `refs/heads/${options.branch}`])
-    .then(() => true)
-    .catch(() => false);
+// Generate a unique branch name
+function generateUniqueBranchName(baseName: string): string {
+  const timestamp = Math.floor(Date.now() / 1000);
+  return `${baseName}-${timestamp}`;
+}
+
+// Create a new branch and push changes
+async function pushChangesToNewBranch(baseBranchName: string, repository: string): Promise<string> {
+  const uniqueBranchName = generateUniqueBranchName(baseBranchName);
   
-  if (!branchExists) {
-    // Create branch from current HEAD if it doesn't exist
-    await exec.exec('git', ['checkout', '-b', options.branch!]);
-  } else {
-    // Switch to the existing branch
-    await exec.exec('git', ['checkout', options.branch!]);
-  }
+  core.info(`Creating new branch: ${uniqueBranchName}`);
+  await exec.exec('git', ['checkout', '-b', uniqueBranchName]);
   
   const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
   
   if (!diff.stdout.trim()) {
     core.info('No changes detected. Skipping PR creation.');
-    return;
+    return '';
   }
   
   await exec.exec('git', ['add', '.']);
   await exec.exec('git', ['commit', '-m', 'Update OpenAPI specifications']);
   
   try {
-    await exec.exec('git', ['push', 'origin', options.branch!]);
+    await exec.exec('git', ['push', 'origin', uniqueBranchName]);
+    return uniqueBranchName;
   } catch (error) {
-    throw new Error(`Failed to push changes to the repository. This typically happens when your token doesn't have write access to the repository. Please ensure your token has the 'repo' scope and you have write access to ${options.repository}.`);
+    throw new Error(`Failed to push changes to the repository. This typically happens when your token doesn't have write access to the repository. Please ensure your token has the 'repo' scope and you have write access to ${repository}.`);
+  }
+}
+
+// Check repository permissions
+async function checkRepositoryPermissions(octokit: any, owner: string, repo: string): Promise<void> {
+  const permissionsResponse = await octokit.rest.repos.getCollaboratorPermissionLevel({
+    owner,
+    repo,
+    username: 'github-actions[bot]'
+  }).catch(() => null);
+  
+  if (permissionsResponse && !['admin', 'write', 'maintain'].includes(permissionsResponse.data.permission)) {
+    core.warning(`Limited permissions detected (${permissionsResponse.data.permission}). This may affect the ability to create PRs.`);
+  }
+}
+
+// Create pull request
+async function createPR(octokit: any, owner: string, repo: string, branchName: string, originalBranchName: string): Promise<any> {
+  return octokit.rest.pulls.create({
+    owner,
+    repo,
+    title: `Update OpenAPI specifications (${originalBranchName})`,
+    head: branchName,
+    base: 'main',
+    body: 'Update OpenAPI specifications based on changes in the source repository.'
+  });
+}
+
+// Auto-merge pull request if configured
+async function attemptAutoMerge(octokit: any, owner: string, repo: string, pullNumber: number): Promise<void> {
+  core.info('Attempting to auto-merge pull request');
+  
+  try {
+    await octokit.rest.pulls.merge({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      merge_method: 'squash'
+    });
+    
+    core.info('Pull request auto-merged successfully');
+  } catch (error) {
+    core.warning('Failed to auto-merge pull request. This may be due to branch protection rules or insufficient permissions. The PR will require manual review and merge.');
+  }
+}
+
+// Main function
+async function createPullRequest(options: SyncOptions): Promise<void> {
+  // Push changes to a new branch
+  const uniqueBranchName = await pushChangesToNewBranch(options.branch!, options.repository);
+  
+  // If no changes were detected, return early
+  if (!uniqueBranchName) {
+    return;
   }
   
-  if (options.token) {
-    const octokit = github.getOctokit(options.token);
-    const [owner, repo] = options.repository.split('/');
-    
-    core.info('Creating pull request');
-    
-    try {
-      const permissionsResponse = await octokit.rest.repos.getCollaboratorPermissionLevel({
-        owner,
-        repo,
-        username: 'github-actions[bot]'
-      }).catch(() => {
-        return null;
-      });
-      
-      if (permissionsResponse && 
-          !['admin', 'write', 'maintain'].includes(permissionsResponse.data.permission)) {
-        core.warning(`Limited permissions detected (${permissionsResponse.data.permission}). This may affect the ability to create PRs.`);
-      }
-      
-      const prResponse = await octokit.rest.pulls.create({
-        owner,
-        repo,
-        title: 'Update OpenAPI specifications',
-        head: options.branch!,
-        base: 'main',
-        body: 'Update OpenAPI specifications based on changes in the source repository.'
-      });
-      
-      core.info(`Pull request created: ${prResponse.data.html_url}`);
-      
-      if (options.autoMerge && prResponse.data.number) {
-        core.info('Attempting to auto-merge pull request');
-        
-        try {
-          await octokit.rest.pulls.merge({
-            owner,
-            repo,
-            pull_number: prResponse.data.number,
-            merge_method: 'squash'
-          });
-          
-          core.info('Pull request auto-merged successfully');
-        } catch (error) {
-          core.warning('Failed to auto-merge pull request. This may be due to branch protection rules or insufficient permissions. The PR will require manual review and merge.');
-        }
-      }
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes('Resource not accessible by integration')) {
-          throw new Error(`Failed to create PR: Your token lacks sufficient permissions. For cross-repository operations, you need a Personal Access Token (PAT) with 'repo' scope from a user who has write access to ${options.repository}.`);
-        } else {
-          throw new Error(`Failed to create PR: ${error.message}`);
-        }
-      } else {
-        throw new Error('An unknown error occurred while creating the PR');
-      }
-    }
-  } else {
+  if (!options.token) {
     core.warning('GitHub token not provided. Skipping PR creation. Changes have been pushed to the remote branch.');
+    return;
+  }
+  
+  const octokit = github.getOctokit(options.token);
+  const [owner, repo] = options.repository.split('/');
+  
+  core.info('Creating pull request');
+  
+  try {
+    // Check repository permissions
+    await checkRepositoryPermissions(octokit, owner, repo);
+    
+    // Create PR
+    const prResponse = await createPR(octokit, owner, repo, uniqueBranchName, options.branch!);
+    
+    core.info(`Pull request created: ${prResponse.data.html_url}`);
+    
+    // Auto-merge if configured
+    if (options.autoMerge && prResponse.data.number) {
+      await attemptAutoMerge(octokit, owner, repo, prResponse.data.number);
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Resource not accessible by integration')) {
+        throw new Error(`Failed to create PR: Your token lacks sufficient permissions. For cross-repository operations, you need a Personal Access Token (PAT) with 'repo' scope from a user who has write access to ${options.repository}.`);
+      } else {
+        throw new Error(`Failed to create PR: ${error.message}`);
+      }
+    } else {
+      throw new Error('An unknown error occurred while creating the PR');
+    }
   }
 }
 
