@@ -83,13 +83,12 @@ async function run() {
             autoMerge
         };
         await cloneRepository(options);
-        const createPR = await copyOpenAPIFiles(options);
-        if (createPR) {
-            await createPullRequest(options);
-        }
-        else {
-            core.info('Source files not found. Skipping pull request creation.');
-        }
+        // const createPR = await copyOpenAPIFiles(options);
+        // if (createPR) {
+        await createPullRequest(options);
+        // } else {
+        //   core.info('Source files not found. Skipping pull request creation.');
+        // }
     }
     catch (error) {
         if (error instanceof Error) {
@@ -147,7 +146,6 @@ async function copyOpenAPIFiles(options) {
     core.info('Copying OpenAPI files to destination locations');
     const sourceRepoRoot = path.resolve(process.env.GITHUB_WORKSPACE || '');
     const destRepoRoot = path.resolve('.');
-    let fileUpdated = false;
     for (const mapping of options.openapi) {
         const sourcePath = path.join(sourceRepoRoot, mapping.source);
         const destPath = path.join(destRepoRoot, mapping.destination);
@@ -161,10 +159,8 @@ async function copyOpenAPIFiles(options) {
             await io.mkdirP(path.dirname(destPath));
             fs.copyFileSync(sourcePath, destPath);
             core.info(`Copied ${sourcePath} to ${destPath}`);
-            fileUpdated = true;
         }
     }
-    return fileUpdated;
 }
 // Main function
 async function createPullRequest(options) {
@@ -178,6 +174,7 @@ async function createPullRequest(options) {
     try {
         const doesBranchExist = await branchExists(owner, repo, branchName, octokit);
         await setupBranch(branchName, doesBranchExist);
+        await copyOpenAPIFiles(options);
         const hasChanges = await commitChanges();
         if (!hasChanges)
             return;
