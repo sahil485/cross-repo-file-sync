@@ -5,7 +5,7 @@ import * as yaml from 'js-yaml';
 import * as github from '@actions/github';
 import { RestEndpointMethodTypes } from '@octokit/plugin-rest-endpoint-methods';
 
-const CONFIG_PATH = path.join('.github', 'workflows', 'openapi-sync.yml');
+const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
 
 type OpenAPISpec = {
   source: string;
