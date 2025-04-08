@@ -110,7 +110,7 @@ type FileData = {
 };
 
 async function autoCommitAndPushIfChanged(): Promise<void> {
-    const token = process.env.GITHUB_TOKEN;
+    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
     if (!token) {
         throw new Error('GitHub token is required');
     }
@@ -127,7 +127,7 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
   
   // Read the file content
   const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-  
+  core.info("HERE1")
   try {
     // Get the current file to check if it exists and get its SHA
     const response = await octokit.rest.repos.getContent({
@@ -136,6 +136,7 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
       path: CONFIG_PATH,
       ref: github.context.sha,
     });
+    core.info("HERE2")
     
     const fileData = response.data as FileData;
     
@@ -144,7 +145,8 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
     }
     
     const fileSha = fileData.sha;
-    
+    core.info("HERE3")
+
     // Update the file
     await octokit.rest.repos.createOrUpdateFileContents({
       owner: github.context.repo.owner,
@@ -163,6 +165,7 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
         email: '41898282+github-actions[bot]@users.noreply.github.com',
       },
     });
+    core.info("HERE4")
     
     core.info('Changes committed and pushed.');
   } catch (error: any) {
