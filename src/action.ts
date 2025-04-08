@@ -153,6 +153,45 @@ async function copyOpenAPIFiles(options: SyncOptions): Promise<boolean> {
   return fileUpdated;
 }
 
+// Main function
+async function createPullRequest(options: SyncOptions): Promise<void> {
+  if (!options.token) {
+    core.warning('GitHub token not provided. Skipping PR creation.');
+    return;
+  }
+  
+  const octokit = github.getOctokit(options.token);
+  const [owner, repo] = options.repository.split('/');
+  const branchName = options.branch!;
+  
+  try {
+    const doesBranchExist = await branchExists(owner, repo, branchName, octokit);
+    await setupBranch(branchName, doesBranchExist);
+    
+    const hasChanges = await commitChanges();
+    if (!hasChanges) return;
+    
+    await pushChanges(branchName);
+    
+    const existingPRNumber = await prExists(owner, repo, branchName, octokit);
+    
+    let prNumber: number;
+    if (existingPRNumber) {
+      await updatePR(octokit, owner, repo, existingPRNumber);
+      prNumber = existingPRNumber;
+    } else {
+      const prResponse = await createPR(octokit, owner, repo, branchName);
+      prNumber = prResponse.data.number;
+    }
+    
+    if (options.autoMerge) {
+      await autoMergePR(octokit, owner, repo, prNumber);
+    }
+  } catch (error) {
+    throw new Error(`Failed to create or update PR: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
 async function branchExists(owner: string, repo: string, branchName: string, octokit: any): Promise<boolean> {
   try {
     await octokit.rest.git.getRef({
@@ -277,45 +316,6 @@ async function autoMergePR(octokit: any, owner: string, repo: string, prNumber: 
     core.info('Pull request auto-merged successfully');
   } catch (error) {
     core.warning('Failed to auto-merge pull request.');
-  }
-}
-
-// Main function
-async function createPullRequest(options: SyncOptions): Promise<void> {
-  if (!options.token) {
-    core.warning('GitHub token not provided. Skipping PR creation.');
-    return;
-  }
-  
-  const octokit = github.getOctokit(options.token);
-  const [owner, repo] = options.repository.split('/');
-  const branchName = options.branch!;
-  
-  try {
-    const doesBranchExist = await branchExists(owner, repo, branchName, octokit);
-    await setupBranch(branchName, doesBranchExist);
-    
-    const hasChanges = await commitChanges();
-    if (!hasChanges) return;
-    
-    await pushChanges(branchName);
-    
-    const existingPRNumber = await prExists(owner, repo, branchName, octokit);
-    
-    let prNumber: number;
-    if (existingPRNumber) {
-      await updatePR(octokit, owner, repo, existingPRNumber);
-      prNumber = existingPRNumber;
-    } else {
-      const prResponse = await createPR(octokit, owner, repo, branchName);
-      prNumber = prResponse.data.number;
-    }
-    
-    if (options.autoMerge) {
-      await autoMergePR(octokit, owner, repo, prNumber);
-    }
-  } catch (error) {
-    throw new Error(`Failed to create or update PR: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
