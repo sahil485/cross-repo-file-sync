@@ -36802,6 +36802,8 @@ async function autoCommitAndPushIfChanged() {
         }
         const fileSha = fileData.sha;
         core.info("HERE3");
+        core.info(github.context.repo.owner);
+        core.info(github.context.repo.repo);
         // Update the file
         await octokit.rest.repos.createOrUpdateFileContents({
             owner: github.context.repo.owner,
