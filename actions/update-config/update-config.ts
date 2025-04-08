@@ -205,7 +205,10 @@ async function run(): Promise<void> {
 
     const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
     const config = yaml.load(configRaw) as Record<string, any>;
-    core.info(`Config: ${JSON.stringify(config?.jobs?.sync?.with?.openapi)}`);
+    core.info(`Jobs: ${JSON.stringify(config?.jobs)}`);
+    core.info(`Sync: ${JSON.stringify(config?.jobs?.sync)}`);
+    core.info(`With: ${JSON.stringify(config?.jobs?.sync?.with)}`);
+    core.info(`OpenAPI: ${JSON.stringify(config?.jobs?.sync?.with?.openapi)}`);
     if (!config?.jobs?.sync?.with?.openapi) {
       core.setFailed('Missing openapi block in sync job');
       return;
