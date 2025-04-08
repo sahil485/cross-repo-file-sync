@@ -36855,6 +36855,7 @@ async function run() {
         }
         const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
         const config = yaml.load(configRaw);
+        core.info(`Config: ${JSON.stringify(config)}`);
         if (!config?.jobs?.sync?.with?.openapi) {
             core.setFailed('Missing openapi block in sync job');
             return;
