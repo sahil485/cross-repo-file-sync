@@ -154,6 +154,19 @@ async function copyOpenAPIFiles(options: SyncOptions): Promise<boolean> {
 }
 
 async function createPullRequest(options: SyncOptions): Promise<void> {
+  // Check if branch exists
+  const branchExists = await exec.getExecOutput('git', ['show-ref', '--verify', `refs/heads/${options.branch}`])
+    .then(() => true)
+    .catch(() => false);
+  
+  if (!branchExists) {
+    // Create branch from current HEAD if it doesn't exist
+    await exec.exec('git', ['checkout', '-b', options.branch!]);
+  } else {
+    // Switch to the existing branch
+    await exec.exec('git', ['checkout', options.branch!]);
+  }
+  
   const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
   
   if (!diff.stdout.trim()) {
