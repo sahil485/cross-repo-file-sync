@@ -114,8 +114,11 @@ type FileData = {
 };
 
 async function autoCommitAndPushIfChanged(): Promise<void> {
-  const token = core.getInput('github-token', { required: true });
-  const octokit = github.getOctokit(token);
+    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
+    if (!token) {
+        throw new Error('GitHub token is required');
+    }
+    const octokit = github.getOctokit(token);
   
   // Check if we're in a PR from a fork
   const isFork =

@@ -36775,7 +36775,10 @@ function updateSpecs(specs, changes) {
     return updated;
 }
 async function autoCommitAndPushIfChanged() {
-    const token = core.getInput('github-token', { required: true });
+    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
+    if (!token) {
+        throw new Error('GitHub token is required');
+    }
     const octokit = github.getOctokit(token);
     // Check if we're in a PR from a fork
     const isFork = github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
