@@ -36704,7 +36704,7 @@ const fs = __importStar(__nccwpck_require__(7147));
 const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
 const github = __importStar(__nccwpck_require__(5438));
-const CONFIG_PATH = path.join('.github', 'workflows', 'openapi-sync.yml');
+const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
 async function getDiffFiles(baseRef) {
     const token = core.getInput('token') || process.env.GITHUB_TOKEN;
     if (!token) {
