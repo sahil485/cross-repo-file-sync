@@ -3,6 +3,12 @@ description: Updates `.github/workflows/openapi-sync.yml` based on renamed or de
 
 author: Fern
 
+inputs:
+  token:
+    description: GitHub token for authentication
+    required: true
+
+
 runs:
   using: node20
   main: dist/index.js
