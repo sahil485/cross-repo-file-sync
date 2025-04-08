@@ -219,6 +219,10 @@ async function run(): Promise<void> {
 
     const changes = await getDiffFiles(baseRef);
     const specs = parseOpenAPIBlock(openapiMapping);
+
+    core.info(`Changes: ${JSON.stringify(changes)}`);
+    core.info(`Specs: ${JSON.stringify(specs)}`);
+    return
     const updatedSpecs = updateSpecs(specs, changes);
 
     config.jobs.sync.with.openapi = formatOpenAPIBlock(updatedSpecs);
