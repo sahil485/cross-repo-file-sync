@@ -1,0 +1,8 @@
+name: Update OpenAPI Sync Config
+description: Updates `.github/workflows/openapi-sync.yml` based on renamed or deleted OpenAPI files in a PR.
+
+author: Fern
+
+runs:
+  using: node20
+  main: dist/index.js
