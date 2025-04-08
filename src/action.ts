@@ -120,8 +120,6 @@ async function cloneRepository(options: SyncOptions): Promise<void> {
   process.chdir(repoDir);
   await exec.exec('git', ['config', 'user.name', 'github-actions']);
   await exec.exec('git', ['config', 'user.email', 'github-actions@github.com']);
-  
-  await exec.exec('git', ['checkout', '-b', options.branch!]);
 }
 
 async function copyOpenAPIFiles(options: SyncOptions): Promise<boolean> {
