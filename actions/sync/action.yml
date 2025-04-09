@@ -5,7 +5,7 @@ inputs:
   repository:
     description: 'Target repository in format org/repo'
     required: true
-  openapi:
+  files:
     description: 'YAML array of OpenAPI mappings with source and destination paths'
     required: true
   token:

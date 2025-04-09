@@ -36713,36 +36713,36 @@ async function run() {
         const token = core.getInput('token') || process.env.GITHUB_TOKEN;
         const branch = core.getInput('branch') || 'update-openapi';
         const autoMerge = core.getBooleanInput('auto_merge') || false;
-        const openApiInput = core.getInput('openapi', { required: true });
-        let openapi;
+        const fileMappingInput = core.getInput('files', { required: true });
+        let fileMapping;
         try {
-            openapi = yaml.load(openApiInput);
+            fileMapping = yaml.load(fileMappingInput);
         }
         catch (yamlError) {
             try {
-                openapi = JSON.parse(openApiInput);
+                fileMapping = JSON.parse(fileMappingInput);
             }
             catch (jsonError) {
-                throw new Error(`Failed to parse 'openapi' input as either YAML or JSON. Please check the format. Error: ${yamlError.message}`);
+                throw new Error(`Failed to parse 'files' input as either YAML or JSON. Please check the format. Error: ${yamlError.message}`);
             }
         }
-        if (!Array.isArray(openapi) || openapi.length === 0) {
-            throw new Error('OpenAPI mapping must be a non-empty array');
+        if (!Array.isArray(fileMapping) || fileMapping.length === 0) {
+            throw new Error('File mapping must be a non-empty array');
         }
-        for (const [index, mapping] of openapi.entries()) {
+        for (const [index, mapping] of fileMapping.entries()) {
             if (!mapping.source || !mapping.destination) {
-                throw new Error(`OpenAPI mapping at index ${index} is missing required 'source' or 'destination' field`);
+                throw new Error(`File mapping at index ${index} is missing required 'source' or 'destination' field`);
             }
         }
         const options = {
             repository,
-            openapi,
+            openapi: fileMapping,
             token,
             branch,
             autoMerge
         };
         await cloneRepository(options);
-        await createPullRequest(options);
+        await syncChanges(options);
     }
     catch (error) {
         if (error instanceof Error) {
@@ -36768,22 +36768,14 @@ async function cloneRepository(options) {
     }
     catch (error) {
         if (error instanceof Error) {
-            if (error.message.includes('Not Found')) {
-                throw new Error(`Repository ${options.repository} not found or you don't have permission to access it. Please check the repository name and ensure your token has the required permissions.`);
-            }
-            else if (error.message.includes('Bad credentials')) {
-                throw new Error('Authentication failed. Please check that your token is valid and has not expired.');
-            }
-            else {
-                throw new Error(`Failed to verify repository access: ${error.message}`);
-            }
+            throw new Error(`Failed to verify repository access: ${error.message}`);
         }
         else {
             throw new Error('An unknown error occurred while verifying repository access');
         }
     }
     const repoUrl = `https://x-access-token:${options.token}@github.com/${options.repository}.git`;
-    const repoDir = 'fern-config';
+    const repoDir = 'temp-fern-config';
     core.info(`Cloning repository ${options.repository} to ${repoDir}`);
     await io.mkdirP(repoDir);
     try {
@@ -36796,40 +36788,51 @@ async function cloneRepository(options) {
     await exec.exec('git', ['config', 'user.name', 'github-actions']);
     await exec.exec('git', ['config', 'user.email', 'github-actions@github.com']);
 }
-async function createPullRequest(options) {
+async function syncChanges(options) {
     if (!options.token) {
-        core.warning('GitHub token not provided. Skipping PR creation.');
+        core.warning('GitHub token not provided. Skipping changes.');
         return;
     }
     const octokit = github.getOctokit(options.token);
     const [owner, repo] = options.repository.split('/');
-    const branchName = options.branch;
     try {
-        const doesBranchExist = await branchExists(owner, repo, branchName, octokit);
-        await setupBranch(branchName, doesBranchExist);
-        await copyOpenAPIFiles(options);
-        const hasChanges = await commitChanges();
-        if (!hasChanges)
-            return;
-        const pushedChanges = await pushChanges(branchName);
-        if (!pushedChanges)
-            return;
-        const existingPRNumber = await prExists(owner, repo, branchName, octokit);
-        let prNumber;
-        if (existingPRNumber) {
-            await updatePR(octokit, owner, repo, existingPRNumber);
-            prNumber = existingPRNumber;
+        // We always work with the branch specified in the branch parameter
+        const workingBranch = options.branch;
+        if (options.autoMerge) {
+            core.info(`Auto-merge enabled. Will push directly to branch: ${workingBranch}`);
         }
         else {
-            const prResponse = await createPR(octokit, owner, repo, branchName);
-            prNumber = prResponse.data.number;
+            core.info(`Auto-merge disabled. Will create PR from branch: ${workingBranch} to main`);
         }
-        if (options.autoMerge) {
-            await autoMergePR(octokit, owner, repo, prNumber);
+        const doesBranchExist = await branchExists(owner, repo, workingBranch, octokit);
+        await setupBranch(workingBranch, doesBranchExist);
+        await copyMappedFiles(options);
+        const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
+        if (!diff.stdout.trim()) {
+            core.info('No changes detected. Skipping further actions.');
+            return;
+        }
+        await commitChanges();
+        const pushedChanges = await pushChanges(workingBranch, options);
+        if (!pushedChanges)
+            return;
+        // Only proceed with PR creation if auto-merge is false
+        if (!options.autoMerge) {
+            // Only create/update PR if auto-merge is disabled
+            const existingPRNumber = await prExists(owner, repo, workingBranch, octokit);
+            if (existingPRNumber) {
+                await updatePR(octokit, owner, repo, existingPRNumber);
+            }
+            else {
+                await createPR(octokit, owner, repo, workingBranch, 'main');
+            }
+        }
+        else {
+            core.info(`Changes pushed directly to branch: ${workingBranch}, skipping PR creation as auto-merge is enabled.`);
         }
     }
     catch (error) {
-        throw new Error(`Failed to create or update PR: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        throw new Error(`Failed to sync changes: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 async function branchExists(owner, repo, branchName, octokit) {
@@ -36846,24 +36849,31 @@ async function branchExists(owner, repo, branchName, octokit) {
     }
 }
 async function setupBranch(branchName, exists) {
-    if (exists) {
-        core.info(`Branch ${branchName} exists. Checking it out.`);
-        await exec.exec('git', ['checkout', branchName]);
+    try {
+        if (exists) {
+            core.info(`Branch ${branchName} exists. Checking it out.`);
+            await exec.exec('git', ['checkout', branchName]);
+            // Pull latest changes from remote to avoid conflicts
+            await exec.exec('git', ['pull', 'origin', branchName]);
+        }
+        else {
+            core.info(`Branch ${branchName} does not exist. Creating it.`);
+            await exec.exec('git', ['checkout', '-b', branchName]);
+        }
     }
-    else {
-        core.info(`Branch ${branchName} does not exist. Creating it.`);
-        await exec.exec('git', ['checkout', '-b', branchName]);
+    catch (error) {
+        throw new Error(`Failed to setup branch ${branchName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
-async function copyOpenAPIFiles(options) {
-    core.info('Copying OpenAPI files to destination locations');
+async function copyMappedFiles(options) {
+    core.info('Copying mapped source files to destination locations');
     const sourceRepoRoot = path.resolve(process.env.GITHUB_WORKSPACE || '');
     const destRepoRoot = path.resolve('.');
     for (const mapping of options.openapi) {
         const sourcePath = path.join(sourceRepoRoot, mapping.source);
         const destPath = path.join(destRepoRoot, mapping.destination);
         if (!fs.existsSync(sourcePath)) {
-            core.info(`Skipping ${mapping.source} (not found)`);
+            throw new Error(`Source file ${mapping.source} not found`);
         }
         else {
             await io.mkdirP(path.dirname(destPath));
@@ -36872,16 +36882,9 @@ async function copyOpenAPIFiles(options) {
     }
 }
 async function commitChanges() {
-    const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
-    if (!diff.stdout.trim()) {
-        core.info('No changes detected. Skipping PR creation.');
-        return false;
-    }
     await exec.exec('git', ['add', '.']);
-    await exec.exec('git', ['commit', '-m', 'Update OpenAPI specifications']);
-    return true;
+    await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`]);
 }
-// Check if there are differences between current branch and remote branch
 async function hasDifferenceWithRemote(branchName) {
     try {
         await exec.exec('git', ['fetch', 'origin', branchName]);
@@ -36893,18 +36896,22 @@ async function hasDifferenceWithRemote(branchName) {
         return true;
     }
 }
-async function pushChanges(branchName) {
+async function pushChanges(branchName, options) {
     try {
-        // Only force push if there are differences with the remote
-        const shouldPush = await hasDifferenceWithRemote(branchName);
+        let shouldPush = true;
+        if (!options.autoMerge) {
+            shouldPush = await hasDifferenceWithRemote(branchName);
+        }
         if (shouldPush) {
-            core.info(`Differences detected with remote branch. Pushing changes.`);
+            core.info(`Pushing changes to branch: ${branchName}`);
+            // Use force push since the branch might exist from a previous run
             await exec.exec('git', ['push', '--force', 'origin', branchName]);
+            return true;
         }
         else {
             core.info(`No differences with remote branch. Skipping push.`);
+            return false;
         }
-        return shouldPush;
     }
     catch (error) {
         throw new Error(`Failed to push changes to the repository: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -36931,34 +36938,18 @@ async function updatePR(octokit, owner, repo, prNumber) {
     });
 }
 // Create a new PR
-async function createPR(octokit, owner, repo, branchName) {
-    core.info(`Creating new PR for branch ${branchName}`);
+async function createPR(octokit, owner, repo, branchName, targetBranch) {
+    core.info(`Creating new PR from ${branchName} to ${targetBranch}`);
     const prResponse = await octokit.rest.pulls.create({
         owner,
         repo,
         title: 'Update OpenAPI specifications',
         head: branchName,
-        base: 'main',
+        base: targetBranch,
         body: 'Update OpenAPI specifications based on changes in the source repository.'
     });
     core.info(`Pull request created: ${prResponse.data.html_url}`);
     return prResponse;
-}
-// Auto-merge a PR
-async function autoMergePR(octokit, owner, repo, prNumber) {
-    core.info('Attempting to auto-merge pull request');
-    try {
-        await octokit.rest.pulls.merge({
-            owner,
-            repo,
-            pull_number: prNumber,
-            merge_method: 'squash'
-        });
-        core.info('Pull request auto-merged successfully');
-    }
-    catch (error) {
-        core.warning('Failed to auto-merge pull request.');
-    }
 }
 run();
 
