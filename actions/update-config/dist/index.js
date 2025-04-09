@@ -36705,6 +36705,34 @@ const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
 const github = __importStar(__nccwpck_require__(5438));
 const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
+async function getComparisonBaseRef(octokit) {
+    const baseRef = process.env.GITHUB_BASE_REF;
+    if (!baseRef) {
+        throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
+    }
+    const prNumber = github.context.payload.pull_request?.number;
+    if (!prNumber) {
+        throw new Error('Pull request number not found in context');
+    }
+    const { data: commits } = await octokit.rest.pulls.listCommits({
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        pull_number: prNumber,
+    });
+    // If this is the first commit in the PR, use the base branch
+    if (commits.length <= 1) {
+        const { data: baseRefData } = await octokit.rest.repos.getBranch({
+            owner: github.context.repo.owner,
+            repo: github.context.repo.repo,
+            branch: baseRef,
+        });
+        return baseRefData.commit.sha;
+    }
+    else {
+        // Otherwise, use the previous commit in the PR
+        return commits[commits.length - 2].sha;
+    }
+}
 async function getDiffFiles(baseRef, octokit) {
     // Get the current commit SHA
     const headSha = github.context.sha;
@@ -36797,7 +36825,7 @@ async function autoCommitAndPushIfChanged(octokit) {
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
             path: CONFIG_PATH,
-            message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files [skip ci]',
+            message: 'chore: auto-update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
             content: Buffer.from(content).toString('base64'),
             sha: fileSha,
             branch,
@@ -36818,11 +36846,6 @@ async function autoCommitAndPushIfChanged(octokit) {
 }
 async function run() {
     try {
-        const baseRef = process.env.GITHUB_BASE_REF;
-        if (!baseRef) {
-            core.setFailed('GITHUB_BASE_REF not found. Are you running in a PR context?');
-            return;
-        }
         if (!fs.existsSync(CONFIG_PATH)) {
             core.setFailed(`Config file not found at ${CONFIG_PATH}`);
             return;
@@ -36844,7 +36867,9 @@ async function run() {
             throw new Error('GitHub token is required');
         }
         const octokit = github.getOctokit(token);
-        const changes = await getDiffFiles(baseRef, octokit);
+        const baseRef = await getComparisonBaseRef(octokit);
+        let changes = await getDiffFiles(baseRef, octokit);
+        changes = changes.filter(Boolean);
         const specs = parseOpenAPIBlock(openapiMapping);
         const updatedSpecs = updateSpecs(specs, changes);
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);

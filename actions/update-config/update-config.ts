@@ -21,6 +21,36 @@ type DiffFile =
 type CompareCommitsResponse = RestEndpointMethodTypes['repos']['compareCommits']['response'];
 type FileEntry = NonNullable<CompareCommitsResponse['data']['files']>[number];
 
+async function getComparisonBaseRef(octokit: InstanceType<typeof GitHub>): Promise<string> {
+    const baseRef = process.env.GITHUB_BASE_REF;
+    if (!baseRef) {
+        throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
+    }
+    const prNumber = github.context.payload.pull_request?.number;
+    if (!prNumber) {
+        throw new Error('Pull request number not found in context');
+    }
+    const { data: commits } = await octokit.rest.pulls.listCommits({
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        pull_number: prNumber,
+    });
+
+    // If this is the first commit in the PR, use the base branch
+    if (commits.length <= 1) {
+        const { data: baseRefData } = await octokit.rest.repos.getBranch({
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        branch: baseRef,
+        });
+        
+        return baseRefData.commit.sha;
+    } else {
+        // Otherwise, use the previous commit in the PR
+        return commits[commits.length - 2].sha;
+    }
+}
+
 async function getDiffFiles(baseRef: string, octokit: InstanceType<typeof GitHub>): Promise<DiffFile[]> {  
   // Get the current commit SHA
   const headSha = github.context.sha;
@@ -139,7 +169,7 @@ async function autoCommitAndPushIfChanged(octokit: InstanceType<typeof GitHub>):
         owner: github.context.repo.owner,
         repo: github.context.repo.repo,
         path: CONFIG_PATH,
-        message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files [skip ci]',
+        message: 'chore: auto-update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
         content: Buffer.from(content).toString('base64'),
         sha: fileSha,
         branch,
@@ -161,11 +191,6 @@ async function autoCommitAndPushIfChanged(octokit: InstanceType<typeof GitHub>):
 
 async function run(): Promise<void> {
   try {
-    const baseRef = process.env.GITHUB_BASE_REF;
-    if (!baseRef) {
-      core.setFailed('GITHUB_BASE_REF not found. Are you running in a PR context?');
-      return;
-    }
 
     if (!fs.existsSync(CONFIG_PATH)) {
       core.setFailed(`Config file not found at ${CONFIG_PATH}`);
@@ -196,7 +221,10 @@ async function run(): Promise<void> {
     }
     const octokit: InstanceType<typeof GitHub> = github.getOctokit(token);
 
-    const changes = await getDiffFiles(baseRef, octokit);
+    const baseRef = await getComparisonBaseRef(octokit);
+    let changes = await getDiffFiles(baseRef, octokit);
+    changes = changes.filter(Boolean);
+
     const specs = parseOpenAPIBlock(openapiMapping);
     const updatedSpecs = updateSpecs(specs, changes);
 
