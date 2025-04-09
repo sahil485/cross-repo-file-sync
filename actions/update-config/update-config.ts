@@ -225,6 +225,11 @@ async function run(): Promise<void> {
     let changes = await getDiffFiles(baseRef, octokit);
     changes = changes.filter(Boolean);
 
+    if (changes.length === 0) {
+      core.info('No tracked files renamed/deleted, skipping update.');
+      return;
+    }
+
     const specs = parseOpenAPIBlock(openapiMapping);
     const updatedSpecs = updateSpecs(specs, changes);
 
