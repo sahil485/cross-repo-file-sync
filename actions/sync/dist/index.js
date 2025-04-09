@@ -36796,7 +36796,6 @@ async function syncChanges(options) {
     const octokit = github.getOctokit(options.token);
     const [owner, repo] = options.repository.split('/');
     try {
-        // We always work with the branch specified in the branch parameter
         const workingBranch = options.branch;
         if (options.autoMerge) {
             core.info(`Auto-merge enabled. Will push directly to branch: ${workingBranch}`);
@@ -36818,7 +36817,6 @@ async function syncChanges(options) {
             return;
         // Only proceed with PR creation if auto-merge is false
         if (!options.autoMerge) {
-            // Only create/update PR if auto-merge is disabled
             const existingPRNumber = await prExists(owner, repo, workingBranch, octokit);
             if (existingPRNumber) {
                 await updatePR(octokit, owner, repo, existingPRNumber);
@@ -36854,7 +36852,7 @@ async function setupBranch(branchName, exists) {
             core.info(`Branch ${branchName} exists. Checking it out.`);
             await exec.exec('git', ['checkout', branchName]);
             // Pull latest changes from remote to avoid conflicts
-            await exec.exec('git', ['pull', 'origin', branchName]);
+            await exec.exec('git', ['pull', 'origin', branchName], { silent: true });
         }
         else {
             core.info(`Branch ${branchName} does not exist. Creating it.`);
@@ -36882,12 +36880,12 @@ async function copyMappedFiles(options) {
     }
 }
 async function commitChanges() {
-    await exec.exec('git', ['add', '.']);
-    await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`]);
+    await exec.exec('git', ['add', '.'], { silent: true });
+    await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`], { silent: true });
 }
 async function hasDifferenceWithRemote(branchName) {
     try {
-        await exec.exec('git', ['fetch', 'origin', branchName]);
+        await exec.exec('git', ['fetch', 'origin', branchName], { silent: true });
         const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`], { silent: true });
         return !!diff.stdout.trim();
     }
@@ -36905,7 +36903,7 @@ async function pushChanges(branchName, options) {
         if (shouldPush) {
             core.info(`Pushing changes to branch: ${branchName}`);
             // Use force push since the branch might exist from a previous run
-            await exec.exec('git', ['push', '--force', 'origin', branchName]);
+            await exec.exec('git', ['push', '--force', 'origin', branchName], { silent: true });
             return true;
         }
         else {

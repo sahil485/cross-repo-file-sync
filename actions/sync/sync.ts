@@ -209,13 +209,13 @@ async function copyMappedFiles(options: SyncOptions): Promise<void> {
 }
 
 async function commitChanges(): Promise<void> {
-  await exec.exec('git', ['add', '.']);
-  await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`]);
+  await exec.exec('git', ['add', '.'], { silent: true });
+  await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`], { silent: true });
 }
 
 async function hasDifferenceWithRemote(branchName: string): Promise<boolean> {
   try {
-    await exec.exec('git', ['fetch', 'origin', branchName]);
+    await exec.exec('git', ['fetch', 'origin', branchName], { silent: true });
     
     const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`], { silent: true });
     
@@ -237,7 +237,7 @@ async function pushChanges(branchName: string, options: SyncOptions): Promise<bo
     if (shouldPush) {
       core.info(`Pushing changes to branch: ${branchName}`);
       // Use force push since the branch might exist from a previous run
-      await exec.exec('git', ['push', '--force', 'origin', branchName]);
+      await exec.exec('git', ['push', '--force', 'origin', branchName], { silent: true });
       return true;
     } else {
       core.info(`No differences with remote branch. Skipping push.`);
