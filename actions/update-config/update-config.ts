@@ -19,34 +19,12 @@ type DiffFile = Record<string, ['D', string] | ['R', string, string]>;
 type CompareCommitsResponse = RestEndpointMethodTypes['repos']['compareCommits']['response'];
 type FileEntry = NonNullable<CompareCommitsResponse['data']['files']>[number];
 
-async function getComparisonBaseRef(octokit: InstanceType<typeof GitHub>): Promise<string> {
+async function getBaseRef(octokit: InstanceType<typeof GitHub>): Promise<string> {
     const baseRef = process.env.GITHUB_BASE_REF;
     if (!baseRef) {
         throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
     }
 
-    // const prNumber = github.context.payload.pull_request?.number;
-    // if (!prNumber) {
-    //     throw new Error('Pull request number not found in context');
-    // }
-
-    // const { data: commits } = await octokit.rest.pulls.listCommits({
-    //     owner: github.context.repo.owner,
-    //     repo: github.context.repo.repo,
-    //     pull_number: prNumber,
-    // });
-
-    // // Look for the most recent bot commit with [skip ci] in the message
-    // const botCommit = [...commits].reverse().find(commit =>
-    //     commit.commit.message.includes('[skip ci]') &&
-    //     commit.author?.login === 'github-actions[bot]'
-    // );
-
-    // if (botCommit) {
-    //     return botCommit.sha;
-    // }
-
-    // Fallback to base branch commit SHA
     const { data: baseRefData } = await octokit.rest.repos.getBranch({
         owner: github.context.repo.owner,
         repo: github.context.repo.repo,
@@ -231,7 +209,7 @@ async function run(): Promise<void> {
     }
     const octokit: InstanceType<typeof GitHub> = github.getOctokit(token);
 
-    const baseRef = await getComparisonBaseRef(octokit);
+    const baseRef = await getBaseRef(octokit);
 
     const specs = parseOpenAPIBlock(openapiMapping);
 
