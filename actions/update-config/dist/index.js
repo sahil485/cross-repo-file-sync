@@ -36705,12 +36705,7 @@ const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
 const github = __importStar(__nccwpck_require__(5438));
 const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
-async function getDiffFiles(baseRef) {
-    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
-    if (!token) {
-        throw new Error('GitHub token is required');
-    }
-    const octokit = github.getOctokit(token);
+async function getDiffFiles(baseRef, octokit) {
     // Get the current commit SHA
     const headSha = github.context.sha;
     // Get the base commit SHA
@@ -36750,7 +36745,7 @@ function updateSpecs(specs, changes) {
             }
         });
         if (!change) {
-            updated.push(spec); // no change
+            updated.push(spec);
             continue;
         }
         if (change[0] === 'D') {
@@ -36772,12 +36767,7 @@ function updateSpecs(specs, changes) {
     }
     return updated;
 }
-async function autoCommitAndPushIfChanged() {
-    const token = core.getInput('token') || process.env.GITHUB_TOKEN;
-    if (!token) {
-        throw new Error('GitHub token is required');
-    }
-    const octokit = github.getOctokit(token);
+async function autoCommitAndPushIfChanged(octokit) {
     const isFork = github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
     if (isFork) {
         core.warning('Skipping commit: PR is from a fork and push is not allowed.');
@@ -36785,6 +36775,7 @@ async function autoCommitAndPushIfChanged() {
     }
     // Read the file content
     const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+    const branch = github.context.payload.pull_request?.head.ref || process.env.GITHUB_HEAD_REF;
     try {
         // Get the current file to check if it exists and get its SHA
         const response = await octokit.rest.repos.getContent({
@@ -36799,7 +36790,6 @@ async function autoCommitAndPushIfChanged() {
         }
         const fileSha = fileData.sha;
         // Update the file
-        const branch = github.context.payload.pull_request?.head.ref;
         if (!branch) {
             throw new Error('Could not find branch for PR.');
         }
@@ -36823,29 +36813,7 @@ async function autoCommitAndPushIfChanged() {
         core.info('Changes committed and pushed.');
     }
     catch (error) {
-        // If the file doesn't exist yet, create it
-        if (error.status === 404) {
-            await octokit.rest.repos.createOrUpdateFileContents({
-                owner: github.context.repo.owner,
-                repo: github.context.repo.repo,
-                path: CONFIG_PATH,
-                message: 'chore: create openapi-sync.yml',
-                content: Buffer.from(content).toString('base64'),
-                branch: github.context.ref.replace('refs/heads/', ''),
-                committer: {
-                    name: 'github-actions',
-                    email: 'github-actions@github.com',
-                },
-                author: {
-                    name: 'github-actions',
-                    email: 'github-actions@github.com',
-                },
-            });
-            core.info('File created and committed.');
-        }
-        else {
-            throw error;
-        }
+        throw error;
     }
 }
 async function run() {
@@ -36859,6 +36827,7 @@ async function run() {
             core.setFailed(`Config file not found at ${CONFIG_PATH}`);
             return;
         }
+        // INSERT FUNCTION HERE
         const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
         const config = yaml.load(configRaw);
         const syncStep = config.jobs.sync.steps?.find((step) => step.with?.openapi);
@@ -36870,13 +36839,18 @@ async function run() {
             core.setFailed('Missing openapi block in sync job');
             return;
         }
-        const changes = await getDiffFiles(baseRef);
+        const token = core.getInput('token') || process.env.GITHUB_TOKEN;
+        if (!token) {
+            throw new Error('GitHub token is required');
+        }
+        const octokit = github.getOctokit(token);
+        const changes = await getDiffFiles(baseRef, octokit);
         const specs = parseOpenAPIBlock(openapiMapping);
         const updatedSpecs = updateSpecs(specs, changes);
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });
         fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        await autoCommitAndPushIfChanged();
+        await autoCommitAndPushIfChanged(octokit);
         core.info('Successfully updated openapi-sync.yml');
     }
     catch (error) {
