@@ -118,7 +118,6 @@ async function syncChanges(options: SyncOptions): Promise<void> {
   const [owner, repo] = options.repository.split('/');
   
   try {
-    // We always work with the branch specified in the branch parameter
     const workingBranch = options.branch!;
     
     if (options.autoMerge) {
@@ -146,7 +145,6 @@ async function syncChanges(options: SyncOptions): Promise<void> {
     
     // Only proceed with PR creation if auto-merge is false
     if (!options.autoMerge) {
-      // Only create/update PR if auto-merge is disabled
       const existingPRNumber = await prExists(owner, repo, workingBranch, octokit);
       
       if (existingPRNumber) {
@@ -181,7 +179,7 @@ async function setupBranch(branchName: string, exists: boolean): Promise<void> {
       core.info(`Branch ${branchName} exists. Checking it out.`);
       await exec.exec('git', ['checkout', branchName]);
       // Pull latest changes from remote to avoid conflicts
-      await exec.exec('git', ['pull', 'origin', branchName]);
+      await exec.exec('git', ['pull', 'origin', branchName], {silent: true});
     } else {
       core.info(`Branch ${branchName} does not exist. Creating it.`);
       await exec.exec('git', ['checkout', '-b', branchName]);
