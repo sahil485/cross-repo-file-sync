@@ -36885,7 +36885,7 @@ async function commitChanges() {
 async function hasDifferenceWithRemote(branchName) {
     try {
         await exec.exec('git', ['fetch', 'origin', branchName]);
-        const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`]);
+        const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`], { silent: true });
         return !!diff.stdout.trim();
     }
     catch (error) {

@@ -216,7 +216,7 @@ async function hasDifferenceWithRemote(branchName: string): Promise<boolean> {
   try {
     await exec.exec('git', ['fetch', 'origin', branchName]);
     
-    const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`]);
+    const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`], { silent: true });
     
     return !!diff.stdout.trim();
   } catch (error) {
