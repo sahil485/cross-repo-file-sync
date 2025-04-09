@@ -36797,7 +36797,7 @@ async function autoCommitAndPushIfChanged(octokit) {
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
             path: CONFIG_PATH,
-            message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files',
+            message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files [skip-ci]',
             content: Buffer.from(content).toString('base64'),
             sha: fileSha,
             branch,
