@@ -13,7 +13,7 @@ inputs:
     required: false
     default: ${{ github.token }}
   branch:
-    description: 'Branch name to create in the target repository'
+    description: 'Branch to push to in the target repository'
     required: true
   auto_merge:
     description: 'Whether to push directly to the specified branch or create a PR'
