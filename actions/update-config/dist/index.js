@@ -36734,25 +36734,24 @@ async function getComparisonBaseRef(octokit) {
     return baseRefData.commit.sha;
 }
 async function getDiffFiles(baseRef, octokit) {
-    // Get the current commit SHA
     const headSha = github.context.sha;
-    // Get the base commit SHA
     const { data: compareData } = await octokit.rest.repos.compareCommits({
         owner: github.context.repo.owner,
         repo: github.context.repo.repo,
         base: baseRef,
         head: headSha,
     });
-    // Transform the files data into the format we need
-    return compareData.files?.map((file) => {
+    const diff = {};
+    for (const file of compareData.files || []) {
         const status = file.status;
         if (status === 'removed') {
-            return ['D', file.filename];
+            diff[file.filename] = ['D', file.filename];
         }
         else if (status === 'renamed') {
-            return ['R', file.previous_filename, file.filename];
+            diff[file.previous_filename] = ['R', file.previous_filename, file.filename];
         }
-    }) || [];
+    }
+    return diff;
 }
 function parseOpenAPIBlock(block) {
     const parsed = yaml.load(block);
@@ -36767,18 +36766,14 @@ function formatOpenAPIBlock(specs) {
 function updateSpecs(specs, changes) {
     const updated = [];
     for (const spec of specs) {
-        const change = changes.find(c => {
-            if (c) {
-                return (c[0] === 'R' && c[1] === spec.source) || (c[0] === 'D' && c[1] === spec.source);
-            }
-        });
+        const change = changes[spec.source];
         if (!change) {
             updated.push(spec);
             continue;
         }
         if (change[0] === 'D') {
             core.info(`Removing deleted source: ${spec.source}`);
-            continue;
+            continue; // skip deleted spec
         }
         if (change[0] === 'R') {
             const [, oldPath, newPath] = change;
@@ -36873,13 +36868,8 @@ async function run() {
             return;
         }
         let changes = await getDiffFiles(baseRef, octokit);
-        changes = changes.filter(Boolean);
         core.info("changes: " + JSON.stringify(changes));
         return;
-        if (changes.length === 0) {
-            core.info('No tracked files renamed/deleted, skipping update.');
-            return;
-        }
         const updatedSpecs = updateSpecs(specs, changes);
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });

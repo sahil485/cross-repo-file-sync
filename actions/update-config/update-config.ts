@@ -14,10 +14,7 @@ type OpenAPISpec = {
 };
 
 type FileStatus = 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
-type DiffFile =
-  | ['D', string]                         
-  | ['R', string, string]
-  | undefined;
+type DiffFile = Record<string, ['D', string] | ['R', string, string]>;                    
 
 type CompareCommitsResponse = RestEndpointMethodTypes['repos']['compareCommits']['response'];
 type FileEntry = NonNullable<CompareCommitsResponse['data']['files']>[number];
@@ -58,29 +55,34 @@ async function getComparisonBaseRef(octokit: InstanceType<typeof GitHub>): Promi
     return baseRefData.commit.sha;
 }
 
-async function getDiffFiles(baseRef: string, octokit: InstanceType<typeof GitHub>): Promise<DiffFile[]> {  
-  // Get the current commit SHA
-  const headSha = github.context.sha;
+async function getDiffFiles(
+    baseRef: string,
+    octokit: InstanceType<typeof GitHub>
+  ): Promise<DiffFile> {
+    const headSha = github.context.sha;
   
-  // Get the base commit SHA
-  const { data: compareData } = await octokit.rest.repos.compareCommits({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    base: baseRef,
-    head: headSha,
-  });
-
-  // Transform the files data into the format we need
-  return compareData.files?.map((file: FileEntry) => {
-    const status = file.status as FileStatus;
-    if (status === 'removed') {
-      return ['D', file.filename];
-    } else if (status === 'renamed') {
-      return ['R', file.previous_filename!, file.filename];
+    const { data: compareData } = await octokit.rest.repos.compareCommits({
+      owner: github.context.repo.owner,
+      repo: github.context.repo.repo,
+      base: baseRef,
+      head: headSha,
+    });
+  
+    const diff: Record<string, ['D', string] | ['R', string, string]> = {};
+  
+    for (const file of compareData.files || []) {
+      const status = file.status as FileStatus;
+  
+      if (status === 'removed') {
+        diff[file.filename] = ['D', file.filename];
+      } else if (status === 'renamed') {
+        diff[file.previous_filename!] = ['R', file.previous_filename!, file.filename];
+      }
     }
-  }) || [];
-}
-
+  
+    return diff;
+  }
+  
 function parseOpenAPIBlock(block: string): OpenAPISpec[] {
   const parsed = yaml.load(block);
   if (!Array.isArray(parsed)) {
@@ -93,42 +95,45 @@ function formatOpenAPIBlock(specs: OpenAPISpec[]): string {
   return specs.map(spec => `  - source: ${spec.source}\n    destination: ${spec.destination}`).join('\n');
 }
 
-function updateSpecs(specs: OpenAPISpec[], changes: DiffFile[]): OpenAPISpec[] {
-  const updated: OpenAPISpec[] = [];
-
-  for (const spec of specs) {
-    const change = changes.find(c => {
-        if (c) {
-            return (c[0] === 'R' && c[1] === spec.source) || (c[0] === 'D' && c[1] === spec.source)
-        }
-    });
-
-    if (!change) {
-      updated.push(spec);
-      continue;
-    }
-
-    if (change[0] === 'D') {
-      core.info(`Removing deleted source: ${spec.source}`);
-      continue;
-    }
-
-    if (change[0] === 'R') {
-      const [, oldPath, newPath] = change;
-      if (!newPath) {
-        core.warning(`Missing new path for renamed file: ${oldPath}`);
+function updateSpecs(
+    specs: OpenAPISpec[],
+    changes: Record<string, ['D', string] | ['R', string, string]>
+  ): OpenAPISpec[] {
+    const updated: OpenAPISpec[] = [];
+  
+    for (const spec of specs) {
+      const change = changes[spec.source];
+  
+      if (!change) {
+        updated.push(spec);
         continue;
       }
-      core.info(`Updating renamed source: ${oldPath} -> ${newPath}`);
-      updated.push({
-        source: newPath,
-        destination: spec.destination.replace(path.basename(spec.source), path.basename(newPath)),
-      });
+  
+      if (change[0] === 'D') {
+        core.info(`Removing deleted source: ${spec.source}`);
+        continue; // skip deleted spec
+      }
+  
+      if (change[0] === 'R') {
+        const [, oldPath, newPath] = change;
+        if (!newPath) {
+          core.warning(`Missing new path for renamed file: ${oldPath}`);
+          continue;
+        }
+  
+        core.info(`Updating renamed source: ${oldPath} -> ${newPath}`);
+        updated.push({
+          source: newPath,
+          destination: spec.destination.replace(
+            path.basename(spec.source),
+            path.basename(newPath)
+          ),
+        });
+      }
     }
-  }
-
-  return updated;
-}
+  
+    return updated;
+  }  
 
 type GetContentResponse = RestEndpointMethodTypes['repos']['getContent']['response'];
 type FileData = {
@@ -236,16 +241,10 @@ async function run(): Promise<void> {
     }
 
     let changes = await getDiffFiles(baseRef, octokit);
-    changes = changes.filter(Boolean);
 
     core.info("changes: " + JSON.stringify(changes));
     return;
-
-    if (changes.length === 0) {
-      core.info('No tracked files renamed/deleted, skipping update.');
-      return;
-    }
-
+    
     const updatedSpecs = updateSpecs(specs, changes);
 
     syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
