@@ -113,6 +113,81 @@ function updateSpecs(
     return updated;
   }  
 
+  function updateSpecsToMap(
+    specs: OpenAPISpec[],
+    changes: Record<string, ['D', string] | ['R', string, string]>
+  ): Map<OpenAPISpec, OpenAPISpec | null> {
+    const updated = new Map<OpenAPISpec, OpenAPISpec | null>();
+  
+    for (const spec of specs) {
+      const change = changes[spec.source];
+  
+      if (!change) {
+        updated.set(spec, spec); // unchanged
+        continue;
+      }
+  
+      if (change[0] === 'D') {
+        core.info(`[REMOVE] ${spec.source} in config.`);
+        updated.set(spec, null);
+        continue;
+      }
+  
+      if (change[0] === 'R') {
+        const [, oldPath, newPath] = change;
+        if (!newPath) {
+          core.warning(`Missing new path for renamed file: ${oldPath}`);
+          updated.set(spec, null);
+          continue;
+        }
+  
+        core.info(`[RENAME] ${oldPath} -> ${newPath} in config.`);
+        updated.set(spec, {
+          source: newPath,
+          destination: spec.destination.replace(
+            path.basename(spec.source),
+            path.basename(newPath)
+          ),
+        });
+      }
+    }
+  
+    return updated;
+  }  
+
+  function replaceSpecsInYaml(
+    updatedSpecs: Map<OpenAPISpec, OpenAPISpec | null>,
+    yamlContent: string
+  ): string {
+    let updatedYaml = yamlContent;
+    
+    // Process each spec update
+    for (const [oldSpec, newSpec] of updatedSpecs.entries()) {
+      // Skip if there's no change
+      if (oldSpec === newSpec) continue;
+      
+      if (newSpec === null) {
+        // Handle deletion: remove the entire entry for this spec
+        const pattern = new RegExp(`\\s*- source:\\s*${escapeRegExp(oldSpec.source)}[^-]*?(?=\\s*-|$)`, 'gs');
+        updatedYaml = updatedYaml.replace(pattern, '');
+      } else {
+        // Handle rename: replace source and destination
+        const sourcePattern = new RegExp(`(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}`, 'g');
+        updatedYaml = updatedYaml.replace(sourcePattern, `$1${newSpec.source}`);
+        
+        const destPattern = new RegExp(`(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}`, 'g');
+        updatedYaml = updatedYaml.replace(destPattern, `$1${newSpec.destination}`);
+      }
+    }
+    
+    return updatedYaml;
+  }
+  
+// Helper function to escape special regex characters
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 type GetContentResponse = RestEndpointMethodTypes['repos']['getContent']['response'];
 type FileData = {
   type: 'file';
@@ -225,14 +300,24 @@ async function run(): Promise<void> {
         return;
     }
 
-    const updatedSpecs = updateSpecs(specs, changes);
-    syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
+    const updatedSpecs = updateSpecsToMap(specs, changes);
 
-    const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-    fs.writeFileSync(CONFIG_PATH, updatedYaml);
-    await autoCommitAndPushIfChanged(octokit);
+    const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
 
-    core.info('Successfully updated openapi-sync.yml');
+    core.info(updatedYaml);
+
+    // fs.writeFileSync(CONFIG_PATH, updatedYaml);
+
+    // await autoCommitAndPushIfChanged(octokit);
+
+    // const updatedSpecs = updateSpecs(specs, changes);
+    // syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
+
+    // const updatedYaml = yaml.dump(config, { lineWidth: -1 });
+    // fs.writeFileSync(CONFIG_PATH, updatedYaml);
+    // await autoCommitAndPushIfChanged(octokit);
+
+    // core.info('Successfully updated openapi-sync.yml');
   } catch (error: any) {
     core.setFailed(error.message);
   }

@@ -36705,29 +36705,11 @@ const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
 const github = __importStar(__nccwpck_require__(5438));
 const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
-async function getComparisonBaseRef(octokit) {
+async function getBaseRef(octokit) {
     const baseRef = process.env.GITHUB_BASE_REF;
     if (!baseRef) {
         throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
     }
-    // const prNumber = github.context.payload.pull_request?.number;
-    // if (!prNumber) {
-    //     throw new Error('Pull request number not found in context');
-    // }
-    // const { data: commits } = await octokit.rest.pulls.listCommits({
-    //     owner: github.context.repo.owner,
-    //     repo: github.context.repo.repo,
-    //     pull_number: prNumber,
-    // });
-    // // Look for the most recent bot commit with [skip ci] in the message
-    // const botCommit = [...commits].reverse().find(commit =>
-    //     commit.commit.message.includes('[skip ci]') &&
-    //     commit.author?.login === 'github-actions[bot]'
-    // );
-    // if (botCommit) {
-    //     return botCommit.sha;
-    // }
-    // Fallback to base branch commit SHA
     const { data: baseRefData } = await octokit.rest.repos.getBranch({
         owner: github.context.repo.owner,
         repo: github.context.repo.repo,
@@ -36791,6 +36773,61 @@ function updateSpecs(specs, changes) {
         }
     }
     return updated;
+}
+function updateSpecsToMap(specs, changes) {
+    const updated = new Map();
+    for (const spec of specs) {
+        const change = changes[spec.source];
+        if (!change) {
+            updated.set(spec, spec); // unchanged
+            continue;
+        }
+        if (change[0] === 'D') {
+            core.info(`[REMOVE] ${spec.source} in config.`);
+            updated.set(spec, null);
+            continue;
+        }
+        if (change[0] === 'R') {
+            const [, oldPath, newPath] = change;
+            if (!newPath) {
+                core.warning(`Missing new path for renamed file: ${oldPath}`);
+                updated.set(spec, null);
+                continue;
+            }
+            core.info(`[RENAME] ${oldPath} -> ${newPath} in config.`);
+            updated.set(spec, {
+                source: newPath,
+                destination: spec.destination.replace(path.basename(spec.source), path.basename(newPath)),
+            });
+        }
+    }
+    return updated;
+}
+function replaceSpecsInYaml(updatedSpecs, yamlContent) {
+    let updatedYaml = yamlContent;
+    // Process each spec update
+    for (const [oldSpec, newSpec] of updatedSpecs.entries()) {
+        // Skip if there's no change
+        if (oldSpec === newSpec)
+            continue;
+        if (newSpec === null) {
+            // Handle deletion: remove the entire entry for this spec
+            const pattern = new RegExp(`\\s*- source:\\s*${escapeRegExp(oldSpec.source)}[^-]*?(?=\\s*-|$)`, 'gs');
+            updatedYaml = updatedYaml.replace(pattern, '');
+        }
+        else {
+            // Handle rename: replace source and destination
+            const sourcePattern = new RegExp(`(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}`, 'g');
+            updatedYaml = updatedYaml.replace(sourcePattern, `$1${newSpec.source}`);
+            const destPattern = new RegExp(`(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}`, 'g');
+            updatedYaml = updatedYaml.replace(destPattern, `$1${newSpec.destination}`);
+        }
+    }
+    return updatedYaml;
+}
+// Helper function to escape special regex characters
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 async function autoCommitAndPushIfChanged(octokit) {
     const isFork = github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
@@ -36863,7 +36900,7 @@ async function run() {
             throw new Error('GitHub token is required');
         }
         const octokit = github.getOctokit(token);
-        const baseRef = await getComparisonBaseRef(octokit);
+        const baseRef = await getBaseRef(octokit);
         const specs = parseOpenAPIBlock(openapiMapping);
         if (specs.length === 0) {
             core.info('No tracked files, skipping update.');
@@ -36874,12 +36911,17 @@ async function run() {
             core.info('No tracked files were renamed/deleted, skipping update.');
             return;
         }
-        const updatedSpecs = updateSpecs(specs, changes);
-        syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
-        const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-        fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        await autoCommitAndPushIfChanged(octokit);
-        core.info('Successfully updated openapi-sync.yml');
+        const updatedSpecs = updateSpecsToMap(specs, changes);
+        const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
+        core.info(updatedYaml);
+        // fs.writeFileSync(CONFIG_PATH, updatedYaml);
+        // await autoCommitAndPushIfChanged(octokit);
+        // const updatedSpecs = updateSpecs(specs, changes);
+        // syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
+        // const updatedYaml = yaml.dump(config, { lineWidth: -1 });
+        // fs.writeFileSync(CONFIG_PATH, updatedYaml);
+        // await autoCommitAndPushIfChanged(octokit);
+        // core.info('Successfully updated openapi-sync.yml');
     }
     catch (error) {
         core.setFailed(error.message);
