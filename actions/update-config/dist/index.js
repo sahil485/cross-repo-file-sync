@@ -36794,6 +36794,7 @@ async function getDiffFiles(baseRef, specs) {
         });
         changesOutput += batchOutput;
     }
+    core.info("changesOutput: " + changesOutput);
     // Process the output in chunks of commit data
     const commitChunks = changesOutput.trim().split(/^[0-9a-f]{40}$/m).filter(Boolean);
     for (const chunk of commitChunks) {
@@ -36841,6 +36842,7 @@ async function getDiffFiles(baseRef, specs) {
             diffFiles.push(['R', source, finalPath]);
         }
     }
+    core.info("diffFiles: " + diffFiles);
     return diffFiles;
 }
 function parseOpenAPIBlock(block) {

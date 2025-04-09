@@ -130,6 +130,8 @@ async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<Diff
       
       changesOutput += batchOutput;
     }
+
+    core.info("changesOutput: " + changesOutput);
     
     // Process the output in chunks of commit data
     const commitChunks = changesOutput.trim().split(/^[0-9a-f]{40}$/m).filter(Boolean);
@@ -182,6 +184,8 @@ async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<Diff
         diffFiles.push(['R', source, finalPath]);
       }
     }
+
+    core.info("diffFiles: " + diffFiles);
     
     return diffFiles;
   }
