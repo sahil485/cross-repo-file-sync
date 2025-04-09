@@ -34,7 +34,7 @@ async function run(): Promise<void> {
 
     const syncStep = config.jobs.sync.steps?.find((step: any) => step.with?.openapi);
     if (!syncStep.with) {
-      syncStep.with = {};
+    syncStep.with = {};
     }
 
     const openapiMapping = syncStep?.with?.openapi; 
@@ -45,43 +45,48 @@ async function run(): Promise<void> {
 
     const token = core.getInput('token') || process.env.GITHUB_TOKEN;
     if (!token) {
-      throw new Error('GitHub token is required');
+        throw new Error('GitHub token is required');
     }
     const octokit: InstanceType<typeof GitHub> = github.getOctokit(token);
-    
-    // Get base and head commits using github.event context for push events
-    const baseSha = github.context.payload.before;
-    const headSha = github.context.payload.after;
-    
-    if (!baseSha || !headSha) {
-      core.setFailed('Could not determine base or head commit SHA');
-      return;
-    }
-    
+    const baseRef = await getBaseRef(octokit);
     const specs = parseOpenAPIBlock(openapiMapping);
 
     if (specs.length === 0) {
-      core.info('No tracked files, skipping update.');
-      return;
+        core.info('No tracked files, skipping update.');
+        return;
     }
 
-    let changes = await getDiffFiles(baseSha, headSha, octokit);
+    let changes = await getDiffFiles(baseRef, octokit);
     
     if (Object.keys(changes).length === 0) {
-      core.info('No tracked files were renamed/deleted, skipping update.');
-      return;
+        core.info('No tracked files were renamed/deleted, skipping update.');
+        return;
     }
 
     const updatedSpecs = updateSpecsToMap(specs, changes);
     const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
 
     fs.writeFileSync(CONFIG_PATH, updatedYaml);
-    await autoCommitAndPushChanges(octokit);
+    await autoCommitAndPushIfChanged(octokit);
 
     core.info('Successfully updated openapi-sync.yml');
   } catch (error: any) {
     core.setFailed(error.message);
   }
+}
+
+async function getBaseRef(octokit: InstanceType<typeof GitHub>): Promise<string> {
+    const baseRef = process.env.GITHUB_BASE_REF;
+    if (!baseRef) {
+        throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
+    }
+
+    const { data: baseRefData } = await octokit.rest.repos.getBranch({
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        branch: baseRef,
+    });
+    return baseRefData.commit.sha;
 }
 
 function parseOpenAPIBlock(block: string): OpenAPISpec[] {
@@ -93,14 +98,15 @@ function parseOpenAPIBlock(block: string): OpenAPISpec[] {
 }
 
 async function getDiffFiles(
-  baseSha: string,
-  headSha: string,
+  baseRef: string,
   octokit: InstanceType<typeof GitHub>
 ): Promise<DiffFile> {
+  const headSha = github.context.sha;
+
   const { data: compareData } = await octokit.rest.repos.compareCommits({
     owner: github.context.repo.owner,
     repo: github.context.repo.repo,
-    base: baseSha,
+    base: baseRef,
     head: headSha,
   });
 
@@ -186,13 +192,19 @@ function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function autoCommitAndPushChanges(octokit: InstanceType<typeof GitHub>): Promise<void> {
-  try {
-    const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    
-    // For push events on main, we're already on the main branch
-    const branch = 'main';
+async function autoCommitAndPushIfChanged(octokit: InstanceType<typeof GitHub>): Promise<void> {
+  const isFork =
+      github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
 
+  if (isFork) {
+    core.warning('Skipping commit: PR is from a fork and push is not allowed.');
+    return;
+  }
+  
+  const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+  const branch = github.context.payload.pull_request?.head.ref || process.env.GITHUB_HEAD_REF;
+
+  try {
     const response = await octokit.rest.repos.getContent({
       owner: github.context.repo.owner,
       repo: github.context.repo.repo,
@@ -207,28 +219,31 @@ async function autoCommitAndPushChanges(octokit: InstanceType<typeof GitHub>): P
     }
     
     const fileSha = fileData.sha;
+    if (!branch) {
+      throw new Error('Could not find branch for PR.');
+    }
 
     await octokit.rest.repos.createOrUpdateFileContents({
-      owner: github.context.repo.owner,
-      repo: github.context.repo.repo,
-      path: CONFIG_PATH,
-      message: 'chore: update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
-      content: Buffer.from(content).toString('base64'),
-      sha: fileSha,
-      branch,
-      committer: {
-        name: 'github-actions',
-        email: 'github-actions@github.com',
-      },
-      author: {
-        name: 'github-actions',
-        email: 'github-actions@github.com',
-      },
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        path: CONFIG_PATH,
+        message: 'chore: update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
+        content: Buffer.from(content).toString('base64'),
+        sha: fileSha,
+        branch,
+        committer: {
+            name: 'github-actions',
+            email: 'github-actions@github.com',
+        },
+        author: {
+            name: 'github-actions',
+            email: 'github-actions@github.com',
+        },
     });
     
-    core.info('Changes committed and pushed to main branch.');
+    core.info('Changes committed and pushed.');
   } catch (error: any) {
-    throw error;
+        throw error;
   }
 }
 

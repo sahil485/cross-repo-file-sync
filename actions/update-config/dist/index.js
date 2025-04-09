@@ -36734,8 +36734,6 @@ async function run() {
             core.setFailed('Could not determine base or head commit SHA');
             return;
         }
-        core.info(`Base commit: ${baseSha}`);
-        core.info(`Head commit: ${headSha}`);
         const specs = parseOpenAPIBlock(openapiMapping);
         if (specs.length === 0) {
             core.info('No tracked files, skipping update.');
