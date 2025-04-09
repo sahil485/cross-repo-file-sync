@@ -36816,8 +36816,10 @@ function replaceSpecsInYaml(updatedSpecs, yamlContent) {
             continue;
         if (newSpec === null) {
             // Only match a single line starting with `- source: <...>`
-            const pattern = new RegExp(`^\\s*- source:\\s*${escapeRegExp(oldSpec.source)}\\s*\\n(?:\\s+[^\\n]*\\n)*?`, 'gm');
-            updatedYaml = updatedYaml.replace(pattern, '');
+            const sourcePattern = new RegExp(`^(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}\\s*$`, 'gm');
+            updatedYaml = updatedYaml.replace(sourcePattern, '');
+            const destPattern = new RegExp(`^(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}\\s*$`, 'gm');
+            updatedYaml = updatedYaml.replace(destPattern, '');
         }
         else {
             const sourcePattern = new RegExp(`^(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}\\s*$`, 'gm');

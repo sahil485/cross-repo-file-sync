@@ -169,11 +169,19 @@ for (const [oldSpec, newSpec] of updatedSpecs.entries()) {
 
     if (newSpec === null) {
     // Only match a single line starting with `- source: <...>`
-    const pattern = new RegExp(
-        `^\\s*- source:\\s*${escapeRegExp(oldSpec.source)}\\s*\\n(?:\\s+[^\\n]*\\n)*?`,
+
+    const sourcePattern = new RegExp(
+        `^(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}\\s*$`,
         'gm'
     );
-    updatedYaml = updatedYaml.replace(pattern, '');
+    updatedYaml = updatedYaml.replace(sourcePattern, '');
+
+    const destPattern = new RegExp(
+        `^(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}\\s*$`,
+        'gm'
+    );
+    updatedYaml = updatedYaml.replace(destPattern, '');
+
     } else {
     const sourcePattern = new RegExp(
         `^(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}\\s*$`,
