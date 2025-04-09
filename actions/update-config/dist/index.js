@@ -36869,8 +36869,13 @@ async function run() {
         }
         let changes = await getDiffFiles(baseRef, octokit);
         core.info("changes: " + JSON.stringify(changes));
-        return;
+        if (Object.keys(changes).length === 0) {
+            core.info('No tracked files were renamed/deleted, skipping update.');
+            return;
+        }
         const updatedSpecs = updateSpecs(specs, changes);
+        core.info("updatedSpecs: " + JSON.stringify(updatedSpecs));
+        return;
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });
         fs.writeFileSync(CONFIG_PATH, updatedYaml);
