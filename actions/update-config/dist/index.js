@@ -36704,6 +36704,7 @@ const fs = __importStar(__nccwpck_require__(7147));
 const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
 const github = __importStar(__nccwpck_require__(5438));
+const exec = __importStar(__nccwpck_require__(1514));
 const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
 async function getComparisonBaseRef(octokit) {
     const baseRef = process.env.GITHUB_BASE_REF;
@@ -36719,40 +36720,128 @@ async function getComparisonBaseRef(octokit) {
         repo: github.context.repo.repo,
         pull_number: prNumber,
     });
-    // If this is the first commit in the PR, use the base branch
-    if (commits.length <= 1) {
-        const { data: baseRefData } = await octokit.rest.repos.getBranch({
-            owner: github.context.repo.owner,
-            repo: github.context.repo.repo,
-            branch: baseRef,
-        });
-        return baseRefData.commit.sha;
+    // Look for the most recent bot commit with [skip ci] in the message
+    const botCommit = [...commits].reverse().find(commit => commit.commit.message.includes('[skip ci]') &&
+        commit.author?.login === 'github-actions[bot]');
+    if (botCommit) {
+        return botCommit.sha;
     }
-    else {
-        // Otherwise, use the previous commit in the PR
-        return commits[commits.length - 2].sha;
-    }
-}
-async function getDiffFiles(baseRef, octokit) {
-    // Get the current commit SHA
-    const headSha = github.context.sha;
-    // Get the base commit SHA
-    const { data: compareData } = await octokit.rest.repos.compareCommits({
+    // Fallback to base branch commit SHA
+    const { data: baseRefData } = await octokit.rest.repos.getBranch({
         owner: github.context.repo.owner,
         repo: github.context.repo.repo,
-        base: baseRef,
-        head: headSha,
+        branch: baseRef,
     });
-    // Transform the files data into the format we need
-    return compareData.files?.map((file) => {
-        const status = file.status;
-        if (status === 'removed') {
-            return ['D', file.filename];
+    return baseRefData.commit.sha;
+}
+// async function getDiffFiles(baseRef: string, octokit: InstanceType<typeof GitHub>): Promise<DiffFile[]> {  
+//   // Get the current commit SHA
+//   const headSha = github.context.sha;
+//   // Get the base commit SHA
+//   const { data: compareData } = await octokit.rest.repos.compareCommits({
+//     owner: github.context.repo.owner,
+//     repo: github.context.repo.repo,
+//     base: baseRef,
+//     head: headSha,
+//   });
+//   // Transform the files data into the format we need
+//   return compareData.files?.map((file: FileEntry) => {
+//     const status = file.status as FileStatus;
+//     if (status === 'removed') {
+//       return ['D', file.filename];
+//     } else if (status === 'renamed') {
+//       return ['R', file.previous_filename!, file.filename];
+//     }
+//   }) || [];
+// }
+async function getDiffFiles(baseRef, specs) {
+    // Track both forward and reverse mappings
+    const sourceToCurrentMap = new Map();
+    const currentToSourceMap = new Map();
+    // Initialize maps with all source files from specs
+    for (const spec of specs) {
+        sourceToCurrentMap.set(spec.source, spec.source);
+        currentToSourceMap.set(spec.source, spec.source);
+    }
+    // Build path list from specs
+    const specPaths = specs.map(spec => spec.source);
+    // Split the command to handle command length limits
+    const baseCommand = [
+        "git",
+        "log",
+        `${baseRef}..HEAD`,
+        "--name-status",
+        "--diff-filter=RD",
+        "--pretty=format:%H"
+    ];
+    // Process files in batches to avoid command line length limits
+    const BATCH_SIZE = 50;
+    let changesOutput = '';
+    // Process files in batches
+    for (let i = 0; i < specPaths.length; i += BATCH_SIZE) {
+        const pathBatch = specPaths.slice(i, i + BATCH_SIZE);
+        // Combine the base command with the current batch of paths
+        const fullCommand = [...baseCommand, "--", ...pathBatch];
+        // Execute the command for this batch
+        let batchOutput = '';
+        await exec.exec(fullCommand[0], fullCommand.slice(1), {
+            listeners: {
+                stdout: (data) => {
+                    batchOutput += data.toString();
+                }
+            },
+            silent: true
+        });
+        changesOutput += batchOutput;
+    }
+    // Process the output in chunks of commit data
+    const commitChunks = changesOutput.trim().split(/^[0-9a-f]{40}$/m).filter(Boolean);
+    for (const chunk of commitChunks) {
+        // Extract file changes from this commit
+        const lines = chunk.trim().split('\n').filter(line => line.match(/^[RD]\d*\t/));
+        for (const line of lines) {
+            const parts = line.split('\t');
+            if (line.startsWith('R')) {
+                // Handle rename
+                if (parts.length >= 3) {
+                    const oldPath = parts[1];
+                    const newPath = parts[2];
+                    // Check if we're tracking this file
+                    const source = currentToSourceMap.get(oldPath);
+                    if (source) {
+                        // Update the mappings for this file
+                        sourceToCurrentMap.set(source, newPath);
+                        currentToSourceMap.delete(oldPath);
+                        currentToSourceMap.set(newPath, source);
+                    }
+                }
+            }
+            else if (line.startsWith('D')) {
+                // Handle deletion
+                if (parts.length >= 2) {
+                    const path = parts[1];
+                    // Check if we're tracking this file
+                    const source = currentToSourceMap.get(path);
+                    if (source) {
+                        // Mark as deleted
+                        sourceToCurrentMap.set(source, null);
+                        currentToSourceMap.delete(path);
+                    }
+                }
+            }
         }
-        else if (status === 'renamed') {
-            return ['R', file.previous_filename, file.filename];
+    }
+    // Convert the final state map to the required output format
+    const diffFiles = [];
+    for (const [source, finalPath] of sourceToCurrentMap.entries()) {
+        if (finalPath === null) {
+            diffFiles.push(['D', source]);
         }
-    }) || [];
+        else if (finalPath !== source) {
+            diffFiles.push(['R', source, finalPath]);
+        }
+    }
+    return diffFiles;
 }
 function parseOpenAPIBlock(block) {
     const parsed = yaml.load(block);
@@ -36868,13 +36957,13 @@ async function run() {
         }
         const octokit = github.getOctokit(token);
         const baseRef = await getComparisonBaseRef(octokit);
-        let changes = await getDiffFiles(baseRef, octokit);
+        const specs = parseOpenAPIBlock(openapiMapping);
+        let changes = await getDiffFiles(baseRef, specs);
         changes = changes.filter(Boolean);
         if (changes.length === 0) {
             core.info('No tracked files renamed/deleted, skipping update.');
             return;
         }
-        const specs = parseOpenAPIBlock(openapiMapping);
         const updatedSpecs = updateSpecs(specs, changes);
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });
