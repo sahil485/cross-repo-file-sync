@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "description": "GitHub Actions to sync and manage OpenAPI specifications",
   "scripts": {
-    "build:sync": "ncc build actions/sync/sync.ts -o actions/sync/dist",
-    "build:update-config": "ncc build actions/update-config/update-config.ts -o actions/update-config/dist",
-    "build": "npm run build:sync && npm run build:update-config",
+    "build:sync": "ncc build sync.ts -o dist",
+    "build": "npm run build:sync",
     "test": "jest",
     "lint": "eslint actions/**/*.ts"
   },

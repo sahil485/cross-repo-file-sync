@@ -23,7 +23,7 @@ export async function run(): Promise<void> {
   try {
     const repository = core.getInput('repository', { required: true });
     const token = core.getInput('token') || process.env.GITHUB_TOKEN;
-    const branch = core.getInput('branch') || 'update-openapi';
+    const branch = core.getInput('branch', { required: true });
     const autoMerge = core.getBooleanInput('auto_merge') || false;
     
     const fileMappingInput = core.getInput('files', { required: true });
@@ -153,7 +153,7 @@ async function syncChanges(options: SyncOptions): Promise<void> {
         await createPR(octokit, owner, repo, workingBranch, 'main');
       }
     } else {
-      core.info(`Changes pushed directly to branch: ${workingBranch}, skipping PR creation as auto-merge is enabled.`);
+      core.info(`Changes pushed directly to branch '${workingBranch}' because auto-merge is enabled.`);
     }
   } catch (error) {
     throw new Error(`Failed to sync changes: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -235,8 +235,6 @@ async function pushChanges(branchName: string, options: SyncOptions): Promise<bo
     }
     
     if (shouldPush) {
-      core.info(`Pushing changes to branch: ${branchName}`);
-      // Use force push since the branch might exist from a previous run
       await exec.exec('git', ['push', '--force', 'origin', branchName], { silent: true });
       return true;
     } else {

@@ -12,7 +12,7 @@
       "moduleResolution": "NodeNext"
     },
     "include": [
-      "actions/**/*.ts",
+      "sync.ts",
     ],
     "exclude": ["node_modules", "**/*.test.ts"]
   }

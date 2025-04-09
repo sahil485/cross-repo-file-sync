@@ -36660,7 +36660,7 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
-/***/ 1501:
+/***/ 7124:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -36699,178 +36699,253 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.run = run;
 const core = __importStar(__nccwpck_require__(2186));
+const github = __importStar(__nccwpck_require__(5438));
+const exec = __importStar(__nccwpck_require__(1514));
+const io = __importStar(__nccwpck_require__(7436));
 const fs = __importStar(__nccwpck_require__(7147));
 const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
-const github = __importStar(__nccwpck_require__(5438));
-const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
 async function run() {
     try {
-        if (!fs.existsSync(CONFIG_PATH)) {
-            core.setFailed(`Config file not found at ${CONFIG_PATH}`);
-            return;
-        }
-        const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-        const config = yaml.load(configRaw);
-        const syncStep = config.jobs.sync.steps?.find((step) => step.with?.openapi);
-        if (!syncStep.with) {
-            syncStep.with = {};
-        }
-        const openapiMapping = syncStep?.with?.openapi;
-        if (!openapiMapping) {
-            core.setFailed('Missing openapi block in sync job');
-            return;
-        }
+        const repository = core.getInput('repository', { required: true });
         const token = core.getInput('token') || process.env.GITHUB_TOKEN;
-        if (!token) {
-            throw new Error('GitHub token is required');
+        const branch = core.getInput('branch', { required: true });
+        const autoMerge = core.getBooleanInput('auto_merge') || false;
+        const fileMappingInput = core.getInput('files', { required: true });
+        let fileMapping;
+        try {
+            fileMapping = yaml.load(fileMappingInput);
         }
-        const octokit = github.getOctokit(token);
-        // Get base and head commits using github.event context for push events
-        const baseSha = github.context.payload.before;
-        const headSha = github.context.payload.after;
-        if (!baseSha || !headSha) {
-            core.setFailed('Could not determine base or head commit SHA');
-            return;
+        catch (yamlError) {
+            try {
+                fileMapping = JSON.parse(fileMappingInput);
+            }
+            catch (jsonError) {
+                throw new Error(`Failed to parse 'files' input as either YAML or JSON. Please check the format. Error: ${yamlError.message}`);
+            }
         }
-        const specs = parseOpenAPIBlock(openapiMapping);
-        if (specs.length === 0) {
-            core.info('No tracked files, skipping update.');
-            return;
+        if (!Array.isArray(fileMapping) || fileMapping.length === 0) {
+            throw new Error('File mapping must be a non-empty array');
         }
-        let changes = await getDiffFiles(baseSha, headSha, octokit);
-        if (Object.keys(changes).length === 0) {
-            core.info('No tracked files were renamed/deleted, skipping update.');
-            return;
+        for (const [index, mapping] of fileMapping.entries()) {
+            if (!mapping.source || !mapping.destination) {
+                throw new Error(`File mapping at index ${index} is missing required 'source' or 'destination' field`);
+            }
         }
-        const updatedSpecs = updateSpecsToMap(specs, changes);
-        const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
-        fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        await autoCommitAndPushChanges(octokit);
-        core.info('Successfully updated openapi-sync.yml');
+        const options = {
+            repository,
+            openapi: fileMapping,
+            token,
+            branch,
+            autoMerge
+        };
+        await cloneRepository(options);
+        await syncChanges(options);
     }
     catch (error) {
-        core.setFailed(error.message);
-    }
-}
-function parseOpenAPIBlock(block) {
-    const parsed = yaml.load(block);
-    if (!Array.isArray(parsed)) {
-        return [];
-    }
-    return parsed;
-}
-async function getDiffFiles(baseSha, headSha, octokit) {
-    const { data: compareData } = await octokit.rest.repos.compareCommits({
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
-        base: baseSha,
-        head: headSha,
-    });
-    const diff = {};
-    for (const file of compareData.files || []) {
-        const status = file.status;
-        if (status === 'removed') {
-            diff[file.filename] = ['D', file.filename];
-        }
-        else if (status === 'renamed') {
-            diff[file.previous_filename] = ['R', file.previous_filename, file.filename];
-        }
-    }
-    return diff;
-}
-function updateSpecsToMap(specs, changes) {
-    const updated = new Map();
-    for (const spec of specs) {
-        const change = changes[spec.source];
-        if (!change) {
-            updated.set(spec, spec); // unchanged
-            continue;
-        }
-        if (change[0] === 'D') {
-            core.info(`[REMOVE] ${spec.source} in config.`);
-            updated.set(spec, null);
-            continue;
-        }
-        if (change[0] === 'R') {
-            const [, oldPath, newPath] = change;
-            if (!newPath) {
-                core.warning(`Missing new path for renamed file: ${oldPath}`);
-                updated.set(spec, null);
-                continue;
-            }
-            core.info(`[RENAME] ${oldPath} -> ${newPath} in config.`);
-            updated.set(spec, {
-                source: newPath,
-                destination: spec.destination
-            });
-        }
-    }
-    return updated;
-}
-function replaceSpecsInYaml(updatedSpecs, yamlContent) {
-    let updatedYaml = yamlContent;
-    for (const [oldSpec, newSpec] of updatedSpecs.entries()) {
-        if (oldSpec === newSpec)
-            continue;
-        if (newSpec === null) {
-            // Only match a single line starting with `- source: <...>`
-            const sourcePattern = new RegExp(`^(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}\\s*$`, 'gm');
-            updatedYaml = updatedYaml.replace(sourcePattern, '');
-            const destPattern = new RegExp(`^(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}\\s*$`, 'gm');
-            updatedYaml = updatedYaml.replace(destPattern, '');
+        if (error instanceof Error) {
+            core.setFailed(error.message);
         }
         else {
-            const sourcePattern = new RegExp(`^(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}\\s*$`, 'gm');
-            updatedYaml = updatedYaml.replace(sourcePattern, `$1${newSpec.source}`);
-            const destPattern = new RegExp(`^(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}\\s*$`, 'gm');
-            updatedYaml = updatedYaml.replace(destPattern, `$1${newSpec.destination}`);
+            core.setFailed('An unknown error occurred');
         }
     }
-    return updatedYaml;
 }
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-async function autoCommitAndPushChanges(octokit) {
+async function cloneRepository(options) {
+    if (!options.token) {
+        throw new Error('GitHub token is required to authenticate and clone the repository. Please provide a token with appropriate permissions.');
+    }
     try {
-        const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-        // For push events on main, we're already on the main branch
-        const branch = 'main';
-        const response = await octokit.rest.repos.getContent({
-            owner: github.context.repo.owner,
-            repo: github.context.repo.repo,
-            path: CONFIG_PATH,
-            ref: github.context.sha,
+        const octokit = github.getOctokit(options.token);
+        const [owner, repo] = options.repository.split('/');
+        await octokit.rest.repos.get({
+            owner,
+            repo
         });
-        const fileData = response.data;
-        if (fileData.type !== 'file') {
-            throw new Error('Path exists but is not a file');
-        }
-        const fileSha = fileData.sha;
-        await octokit.rest.repos.createOrUpdateFileContents({
-            owner: github.context.repo.owner,
-            repo: github.context.repo.repo,
-            path: CONFIG_PATH,
-            message: 'chore: update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
-            content: Buffer.from(content).toString('base64'),
-            sha: fileSha,
-            branch,
-            committer: {
-                name: 'github-actions',
-                email: 'github-actions@github.com',
-            },
-            author: {
-                name: 'github-actions',
-                email: 'github-actions@github.com',
-            },
-        });
-        core.info('Changes committed and pushed to main branch.');
+        core.info('Successfully authenticated with the target repository');
     }
     catch (error) {
-        throw error;
+        if (error instanceof Error) {
+            throw new Error(`Failed to verify repository access: ${error.message}`);
+        }
+        else {
+            throw new Error('An unknown error occurred while verifying repository access');
+        }
     }
+    const repoUrl = `https://x-access-token:${options.token}@github.com/${options.repository}.git`;
+    const repoDir = 'temp-fern-config';
+    core.info(`Cloning repository ${options.repository} to ${repoDir}`);
+    await io.mkdirP(repoDir);
+    try {
+        await exec.exec('git', ['clone', repoUrl, repoDir]);
+    }
+    catch (error) {
+        throw new Error(`Failed to clone repository. Please ensure your token has 'repo' scope and you have write access to ${options.repository}.`);
+    }
+    process.chdir(repoDir);
+    await exec.exec('git', ['config', 'user.name', 'github-actions']);
+    await exec.exec('git', ['config', 'user.email', 'github-actions@github.com']);
+}
+async function syncChanges(options) {
+    if (!options.token) {
+        core.warning('GitHub token not provided. Skipping changes.');
+        return;
+    }
+    const octokit = github.getOctokit(options.token);
+    const [owner, repo] = options.repository.split('/');
+    try {
+        const workingBranch = options.branch;
+        if (options.autoMerge) {
+            core.info(`Auto-merge enabled. Will push directly to branch: ${workingBranch}`);
+        }
+        else {
+            core.info(`Auto-merge disabled. Will create PR from branch: ${workingBranch} to main`);
+        }
+        const doesBranchExist = await branchExists(owner, repo, workingBranch, octokit);
+        await setupBranch(workingBranch, doesBranchExist);
+        await copyMappedFiles(options);
+        const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
+        if (!diff.stdout.trim()) {
+            core.info('No changes detected. Skipping further actions.');
+            return;
+        }
+        await commitChanges();
+        const pushedChanges = await pushChanges(workingBranch, options);
+        if (!pushedChanges)
+            return;
+        // Only proceed with PR creation if auto-merge is false
+        if (!options.autoMerge) {
+            const existingPRNumber = await prExists(owner, repo, workingBranch, octokit);
+            if (existingPRNumber) {
+                await updatePR(octokit, owner, repo, existingPRNumber);
+            }
+            else {
+                await createPR(octokit, owner, repo, workingBranch, 'main');
+            }
+        }
+        else {
+            core.info(`Changes pushed directly to branch '${workingBranch}' because auto-merge is enabled.`);
+        }
+    }
+    catch (error) {
+        throw new Error(`Failed to sync changes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+async function branchExists(owner, repo, branchName, octokit) {
+    try {
+        await octokit.rest.git.getRef({
+            owner,
+            repo,
+            ref: `heads/${branchName}`
+        });
+        return true;
+    }
+    catch (error) {
+        return false;
+    }
+}
+async function setupBranch(branchName, exists) {
+    try {
+        if (exists) {
+            core.info(`Branch ${branchName} exists. Checking it out.`);
+            await exec.exec('git', ['checkout', branchName]);
+            // Pull latest changes from remote to avoid conflicts
+            await exec.exec('git', ['pull', 'origin', branchName], { silent: true });
+        }
+        else {
+            core.info(`Branch ${branchName} does not exist. Creating it.`);
+            await exec.exec('git', ['checkout', '-b', branchName]);
+        }
+    }
+    catch (error) {
+        throw new Error(`Failed to setup branch ${branchName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+async function copyMappedFiles(options) {
+    core.info('Copying mapped source files to destination locations');
+    const sourceRepoRoot = path.resolve(process.env.GITHUB_WORKSPACE || '');
+    const destRepoRoot = path.resolve('.');
+    for (const mapping of options.openapi) {
+        const sourcePath = path.join(sourceRepoRoot, mapping.source);
+        const destPath = path.join(destRepoRoot, mapping.destination);
+        if (!fs.existsSync(sourcePath)) {
+            throw new Error(`Source file ${mapping.source} not found`);
+        }
+        else {
+            await io.mkdirP(path.dirname(destPath));
+            fs.copyFileSync(sourcePath, destPath);
+        }
+    }
+}
+async function commitChanges() {
+    await exec.exec('git', ['add', '.'], { silent: true });
+    await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`], { silent: true });
+}
+async function hasDifferenceWithRemote(branchName) {
+    try {
+        await exec.exec('git', ['fetch', 'origin', branchName], { silent: true });
+        const diff = await exec.getExecOutput('git', ['diff', `HEAD`, `origin/${branchName}`], { silent: true });
+        return !!diff.stdout.trim();
+    }
+    catch (error) {
+        core.info(`Could not fetch remote branch, assuming first push: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return true;
+    }
+}
+async function pushChanges(branchName, options) {
+    try {
+        let shouldPush = true;
+        if (!options.autoMerge) {
+            shouldPush = await hasDifferenceWithRemote(branchName);
+        }
+        if (shouldPush) {
+            await exec.exec('git', ['push', '--force', 'origin', branchName], { silent: true });
+            return true;
+        }
+        else {
+            core.info(`No differences with remote branch. Skipping push.`);
+            return false;
+        }
+    }
+    catch (error) {
+        throw new Error(`Failed to push changes to the repository: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+// Check if a PR exists for a branch
+async function prExists(owner, repo, branchName, octokit) {
+    const prs = await octokit.rest.pulls.list({
+        owner,
+        repo,
+        head: `${owner}:${branchName}`,
+        state: 'open'
+    });
+    return prs.data.length > 0 ? prs.data[0].number : null;
+}
+// Update an existing PR
+async function updatePR(octokit, owner, repo, prNumber) {
+    core.info(`Updating PR #${prNumber}`);
+    await octokit.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        body: `Update OpenAPI specifications based on changes in the source repository.\nUpdated: ${new Date().toISOString()}`
+    });
+}
+// Create a new PR
+async function createPR(octokit, owner, repo, branchName, targetBranch) {
+    core.info(`Creating new PR from ${branchName} to ${targetBranch}`);
+    const prResponse = await octokit.rest.pulls.create({
+        owner,
+        repo,
+        title: 'Update OpenAPI specifications',
+        head: branchName,
+        base: targetBranch,
+        body: 'Update OpenAPI specifications based on changes in the source repository.'
+    });
+    core.info(`Pull request created: ${prResponse.data.html_url}`);
+    return prResponse;
 }
 run();
 
@@ -38816,7 +38891,7 @@ module.exports = JSON.parse('[[[0,44],"disallowed_STD3_valid"],[[45,46],"valid"]
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(1501);
+/******/ 	var __webpack_exports__ = __nccwpck_require__(7124);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()
