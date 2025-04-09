@@ -58,134 +58,28 @@ async function getComparisonBaseRef(octokit: InstanceType<typeof GitHub>): Promi
     return baseRefData.commit.sha;
 }
 
-
-// async function getDiffFiles(baseRef: string, octokit: InstanceType<typeof GitHub>): Promise<DiffFile[]> {  
-//   // Get the current commit SHA
-//   const headSha = github.context.sha;
+async function getDiffFiles(baseRef: string, octokit: InstanceType<typeof GitHub>): Promise<DiffFile[]> {  
+  // Get the current commit SHA
+  const headSha = github.context.sha;
   
-//   // Get the base commit SHA
-//   const { data: compareData } = await octokit.rest.repos.compareCommits({
-//     owner: github.context.repo.owner,
-//     repo: github.context.repo.repo,
-//     base: baseRef,
-//     head: headSha,
-//   });
+  // Get the base commit SHA
+  const { data: compareData } = await octokit.rest.repos.compareCommits({
+    owner: github.context.repo.owner,
+    repo: github.context.repo.repo,
+    base: baseRef,
+    head: headSha,
+  });
 
-//   // Transform the files data into the format we need
-//   return compareData.files?.map((file: FileEntry) => {
-//     const status = file.status as FileStatus;
-//     if (status === 'removed') {
-//       return ['D', file.filename];
-//     } else if (status === 'renamed') {
-//       return ['R', file.previous_filename!, file.filename];
-//     }
-//   }) || [];
-// }
-
-async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<DiffFile[]> {
-    // Track both forward and reverse mappings
-    const sourceToCurrentMap = new Map<string, string | null>();
-    const currentToSourceMap = new Map<string, string>();
-    
-    // Initialize maps with all source files from specs
-    for (const spec of specs) {
-      sourceToCurrentMap.set(spec.source, spec.source);
-      currentToSourceMap.set(spec.source, spec.source);
+  // Transform the files data into the format we need
+  return compareData.files?.map((file: FileEntry) => {
+    const status = file.status as FileStatus;
+    if (status === 'removed') {
+      return ['D', file.filename];
+    } else if (status === 'renamed') {
+      return ['R', file.previous_filename!, file.filename];
     }
-    
-    // Build path list from specs
-    const specPaths = specs.map(spec => spec.source);
-    
-    // Split the command to handle command length limits
-    const baseCommand = [
-      "git", 
-      "log", 
-      `${baseRef}..HEAD`, 
-      "--name-status", 
-      "--diff-filter=RD", 
-      "--find-renames",
-      "--pretty=format:%H"
-    ];
-    
-    // Process files in batches
-    const BATCH_SIZE = 50;
-    let changesOutput = '';
-    
-    for (let i = 0; i < specPaths.length; i += BATCH_SIZE) {
-      const pathBatch = specPaths.slice(i, i + BATCH_SIZE);
-      const fullCommand = [...baseCommand, "--", ...pathBatch];
-      
-      let batchOutput = '';
-      await exec.exec(fullCommand[0], fullCommand.slice(1), {
-        listeners: {
-          stdout: (data: Buffer) => {
-            batchOutput += data.toString();
-          }
-        },
-        silent: true
-      });
-      
-      changesOutput += batchOutput;
-    }
-    
-    // Add debug logging
-    console.log("Raw git output:", changesOutput);
-    
-    // Process the output in chunks of commit data
-    const commitChunks = changesOutput.trim().split(/^[0-9a-f]{40}$/m).filter(Boolean);
-    
-    for (const chunk of commitChunks) {
-      const lines = chunk.trim().split('\n');
-      
-      for (const line of lines) {
-        // Using regex to better match the format of rename entries which include similarity score
-        if (line.match(/^R\d*/)) {
-          const parts = line.split('\t');
-          if (parts.length >= 3) {
-            const oldPath = parts[1];
-            const newPath = parts[2];
-            
-            console.log(`Found rename: ${oldPath} -> ${newPath}`);
-            
-            const source = currentToSourceMap.get(oldPath);
-            if (source) {
-              sourceToCurrentMap.set(source, newPath);
-              currentToSourceMap.delete(oldPath);
-              currentToSourceMap.set(newPath, source);
-            }
-          }
-        } else if (line.match(/^D/)) {
-          const parts = line.split('\t');
-          if (parts.length >= 2) {
-            const path = parts[1];
-            
-            console.log(`Found deletion: ${path}`);
-            
-            const source = currentToSourceMap.get(path);
-            if (source) {
-              sourceToCurrentMap.set(source, null);
-              currentToSourceMap.delete(path);
-            }
-          }
-        }
-      }
-    }
-    
-    // Convert the final state map to the required output format
-    const diffFiles: DiffFile[] = [];
-    for (const [source, finalPath] of sourceToCurrentMap.entries()) {
-      if (finalPath === null) {
-        diffFiles.push(['D', source]);
-      } else if (finalPath !== source) {
-        diffFiles.push(['R', source, finalPath]);
-      }
-    }
-    
-    // Log final results
-    console.log("Final diff files:", JSON.stringify(diffFiles));
-    
-    return diffFiles;
-  }
+  }) || [];
+}
 
 function parseOpenAPIBlock(block: string): OpenAPISpec[] {
   const parsed = yaml.load(block);
@@ -341,8 +235,11 @@ async function run(): Promise<void> {
         return;
     }
 
-    let changes = await getDiffFiles(baseRef, specs);
+    let changes = await getDiffFiles(baseRef, octokit);
     changes = changes.filter(Boolean);
+
+    core.info("changes: " + JSON.stringify(changes));
+    return;
 
     if (changes.length === 0) {
       core.info('No tracked files renamed/deleted, skipping update.');
