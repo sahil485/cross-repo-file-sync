@@ -110,7 +110,7 @@ function updateSpecs(
       }
   
       if (change[0] === 'D') {
-        core.info(`Removing deleted source: ${spec.source}`);
+        core.info(`[REMOVE] ${spec.source} in config.`);
         continue; // skip deleted spec
       }
   
@@ -121,7 +121,7 @@ function updateSpecs(
           continue;
         }
   
-        core.info(`Updating renamed source: ${oldPath} -> ${newPath}`);
+        core.info(`[RENAME]${oldPath} -> ${newPath} in config.`);
         updated.push({
           source: newPath,
           destination: spec.destination.replace(
@@ -241,11 +241,6 @@ async function run(): Promise<void> {
     }
 
     let changes = await getDiffFiles(baseRef, octokit);
-
-    core.info('Changes detected:');
-    for (const [key, value] of Object.entries(changes)) {
-        core.info(`${key}: ${JSON.stringify(value)}`);
-    }
     
     if (Object.keys(changes).length === 0) {
         core.info('No tracked files were renamed/deleted, skipping update.');
@@ -253,13 +248,6 @@ async function run(): Promise<void> {
     }
 
     const updatedSpecs = updateSpecs(specs, changes);
-
-    core.info('Updated specs:');
-    for (const spec of updatedSpecs) {
-        core.info(`${spec.source} -> ${spec.destination}`);
-    }
-    return;
-
     syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
 
     const updatedYaml = yaml.dump(config, { lineWidth: -1 });
