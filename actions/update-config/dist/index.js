@@ -36913,15 +36913,12 @@ async function run() {
         }
         const updatedSpecs = updateSpecsToMap(specs, changes);
         const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
-        core.info(updatedYaml);
-        // fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        // await autoCommitAndPushIfChanged(octokit);
         // const updatedSpecs = updateSpecs(specs, changes);
         // syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         // const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-        // fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        // await autoCommitAndPushIfChanged(octokit);
-        // core.info('Successfully updated openapi-sync.yml');
+        fs.writeFileSync(CONFIG_PATH, updatedYaml);
+        await autoCommitAndPushIfChanged(octokit);
+        core.info('Successfully updated openapi-sync.yml');
     }
     catch (error) {
         core.setFailed(error.message);
