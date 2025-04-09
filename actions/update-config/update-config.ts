@@ -103,21 +103,18 @@ async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<Diff
       `${baseRef}..HEAD`, 
       "--name-status", 
       "--diff-filter=RD", 
-      "--pretty=format:%H%n"
+      "--find-renames",
+      "--pretty=format:%H"
     ];
     
-    // Process files in batches to avoid command line length limits
+    // Process files in batches
     const BATCH_SIZE = 50;
     let changesOutput = '';
     
-    // Process files in batches
     for (let i = 0; i < specPaths.length; i += BATCH_SIZE) {
       const pathBatch = specPaths.slice(i, i + BATCH_SIZE);
-      
-      // Combine the base command with the current batch of paths
       const fullCommand = [...baseCommand, "--", ...pathBatch];
       
-      // Execute the command for this batch
       let batchOutput = '';
       await exec.exec(fullCommand[0], fullCommand.slice(1), {
         listeners: {
@@ -130,43 +127,42 @@ async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<Diff
       
       changesOutput += batchOutput;
     }
-
-    core.info("changesOutput: " + changesOutput);
+    
+    // Add debug logging
+    console.log("Raw git output:", changesOutput);
     
     // Process the output in chunks of commit data
     const commitChunks = changesOutput.trim().split(/^[0-9a-f]{40}$/m).filter(Boolean);
     
     for (const chunk of commitChunks) {
-      // Extract file changes from this commit
-      const lines = chunk.trim().split('\n').filter(line => line.match(/^[RD]\d*\t/));
+      const lines = chunk.trim().split('\n');
       
       for (const line of lines) {
-        const parts = line.split('\t');
-        
-        if (line.startsWith('R')) {
-          // Handle rename
+        // Using regex to better match the format of rename entries which include similarity score
+        if (line.match(/^R\d*/)) {
+          const parts = line.split('\t');
           if (parts.length >= 3) {
             const oldPath = parts[1];
             const newPath = parts[2];
             
-            // Check if we're tracking this file
+            console.log(`Found rename: ${oldPath} -> ${newPath}`);
+            
             const source = currentToSourceMap.get(oldPath);
             if (source) {
-              // Update the mappings for this file
               sourceToCurrentMap.set(source, newPath);
               currentToSourceMap.delete(oldPath);
               currentToSourceMap.set(newPath, source);
             }
           }
-        } else if (line.startsWith('D')) {
-          // Handle deletion
+        } else if (line.match(/^D/)) {
+          const parts = line.split('\t');
           if (parts.length >= 2) {
             const path = parts[1];
             
-            // Check if we're tracking this file
+            console.log(`Found deletion: ${path}`);
+            
             const source = currentToSourceMap.get(path);
             if (source) {
-              // Mark as deleted
               sourceToCurrentMap.set(source, null);
               currentToSourceMap.delete(path);
             }
@@ -184,8 +180,9 @@ async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<Diff
         diffFiles.push(['R', source, finalPath]);
       }
     }
-
-    core.info("diffFiles: " + diffFiles);
+    
+    // Log final results
+    console.log("Final diff files:", JSON.stringify(diffFiles));
     
     return diffFiles;
   }
