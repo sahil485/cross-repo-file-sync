@@ -36772,7 +36772,7 @@ async function getDiffFiles(baseRef, specs) {
         `${baseRef}..HEAD`,
         "--name-status",
         "--diff-filter=RD",
-        "--pretty=format:%H"
+        "--pretty=format:%H%n"
     ];
     // Process files in batches to avoid command line length limits
     const BATCH_SIZE = 50;
@@ -36939,7 +36939,6 @@ async function run() {
             core.setFailed(`Config file not found at ${CONFIG_PATH}`);
             return;
         }
-        // INSERT FUNCTION HERE
         const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
         const config = yaml.load(configRaw);
         const syncStep = config.jobs.sync.steps?.find((step) => step.with?.openapi);
@@ -36958,6 +36957,10 @@ async function run() {
         const octokit = github.getOctokit(token);
         const baseRef = await getComparisonBaseRef(octokit);
         const specs = parseOpenAPIBlock(openapiMapping);
+        if (specs.length === 0) {
+            core.info('No tracked files, skipping update.');
+            return;
+        }
         let changes = await getDiffFiles(baseRef, specs);
         changes = changes.filter(Boolean);
         if (changes.length === 0) {

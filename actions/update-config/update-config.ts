@@ -103,7 +103,7 @@ async function getDiffFiles(baseRef: string, specs: OpenAPISpec[]): Promise<Diff
       `${baseRef}..HEAD`, 
       "--name-status", 
       "--diff-filter=RD", 
-      "--pretty=format:%H"
+      "--pretty=format:%H%n"
     ];
     
     // Process files in batches to avoid command line length limits
@@ -309,8 +309,6 @@ async function run(): Promise<void> {
       return;
     }
 
-    // INSERT FUNCTION HERE
-
     const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
     const config = yaml.load(configRaw) as Record<string, any>;
 
@@ -336,6 +334,11 @@ async function run(): Promise<void> {
     const baseRef = await getComparisonBaseRef(octokit);
 
     const specs = parseOpenAPIBlock(openapiMapping);
+
+    if (specs.length === 0) {
+        core.info('No tracked files, skipping update.');
+        return;
+    }
 
     let changes = await getDiffFiles(baseRef, specs);
     changes = changes.filter(Boolean);
