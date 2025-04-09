@@ -143,24 +143,28 @@ async function autoCommitAndPushIfChanged(): Promise<void> {
     
     const fileSha = fileData.sha;
     // Update the file
+    const branch = github.context.payload.pull_request?.head.ref;
+    if (!branch) {
+      throw new Error('Could not find branch for PR.');
+    }
+
     await octokit.rest.repos.createOrUpdateFileContents({
-      owner: github.context.repo.owner,
-      repo: github.context.repo.repo,
-      path: CONFIG_PATH,
-      message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files',
-      content: Buffer.from(content).toString('base64'),
-      sha: fileSha,
-      branch: github.context.ref.replace('refs/heads/', ''),
-      committer: {
-        name: 'github-actions',
-        email: 'github-actions@github.com',
-      },
-      author: {
-        name: 'github-actions',
-        email: 'github-actions@github.com',
-      },
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        path: CONFIG_PATH,
+        message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files',
+        content: Buffer.from(content).toString('base64'),
+        sha: fileSha,
+        branch,
+        committer: {
+            name: 'github-actions',
+            email: 'github-actions@github.com',
+        },
+        author: {
+            name: 'github-actions',
+            email: 'github-actions@github.com',
+        },
     });
-    core.info("HERE4")
     
     core.info('Changes committed and pushed.');
   } catch (error: any) {
@@ -225,9 +229,7 @@ async function run(): Promise<void> {
     syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
 
     const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-    core.info(`Updated YAML:\n${updatedYaml}`);
     fs.writeFileSync(CONFIG_PATH, updatedYaml);
-    core.info(`File written to ${CONFIG_PATH}`);
     await autoCommitAndPushIfChanged();
 
     core.info('Successfully updated openapi-sync.yml');

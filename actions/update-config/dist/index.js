@@ -36799,6 +36799,10 @@ async function autoCommitAndPushIfChanged() {
         }
         const fileSha = fileData.sha;
         // Update the file
+        const branch = github.context.payload.pull_request?.head.ref;
+        if (!branch) {
+            throw new Error('Could not find branch for PR.');
+        }
         await octokit.rest.repos.createOrUpdateFileContents({
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
@@ -36806,7 +36810,7 @@ async function autoCommitAndPushIfChanged() {
             message: 'chore: auto-update openapi-sync.yml based on renamed/deleted OpenAPI files',
             content: Buffer.from(content).toString('base64'),
             sha: fileSha,
-            branch: github.context.ref.replace('refs/heads/', ''),
+            branch,
             committer: {
                 name: 'github-actions',
                 email: 'github-actions@github.com',
@@ -36816,7 +36820,6 @@ async function autoCommitAndPushIfChanged() {
                 email: 'github-actions@github.com',
             },
         });
-        core.info("HERE4");
         core.info('Changes committed and pushed.');
     }
     catch (error) {
@@ -36872,9 +36875,7 @@ async function run() {
         const updatedSpecs = updateSpecs(specs, changes);
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-        core.info(`Updated YAML:\n${updatedYaml}`);
         fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        core.info(`File written to ${CONFIG_PATH}`);
         await autoCommitAndPushIfChanged();
         core.info('Successfully updated openapi-sync.yml');
     }
