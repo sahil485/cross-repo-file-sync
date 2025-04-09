@@ -36710,21 +36710,23 @@ async function getComparisonBaseRef(octokit) {
     if (!baseRef) {
         throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
     }
-    const prNumber = github.context.payload.pull_request?.number;
-    if (!prNumber) {
-        throw new Error('Pull request number not found in context');
-    }
-    const { data: commits } = await octokit.rest.pulls.listCommits({
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
-        pull_number: prNumber,
-    });
-    // Look for the most recent bot commit with [skip ci] in the message
-    const botCommit = [...commits].reverse().find(commit => commit.commit.message.includes('[skip ci]') &&
-        commit.author?.login === 'github-actions[bot]');
-    if (botCommit) {
-        return botCommit.sha;
-    }
+    // const prNumber = github.context.payload.pull_request?.number;
+    // if (!prNumber) {
+    //     throw new Error('Pull request number not found in context');
+    // }
+    // const { data: commits } = await octokit.rest.pulls.listCommits({
+    //     owner: github.context.repo.owner,
+    //     repo: github.context.repo.repo,
+    //     pull_number: prNumber,
+    // });
+    // // Look for the most recent bot commit with [skip ci] in the message
+    // const botCommit = [...commits].reverse().find(commit =>
+    //     commit.commit.message.includes('[skip ci]') &&
+    //     commit.author?.login === 'github-actions[bot]'
+    // );
+    // if (botCommit) {
+    //     return botCommit.sha;
+    // }
     // Fallback to base branch commit SHA
     const { data: baseRefData } = await octokit.rest.repos.getBranch({
         owner: github.context.repo.owner,
@@ -36868,13 +36870,19 @@ async function run() {
             return;
         }
         let changes = await getDiffFiles(baseRef, octokit);
-        core.info("changes: " + JSON.stringify(changes));
+        core.info('Changes detected:');
+        for (const [key, value] of Object.entries(changes)) {
+            core.info(`${key}: ${JSON.stringify(value)}`);
+        }
         if (Object.keys(changes).length === 0) {
             core.info('No tracked files were renamed/deleted, skipping update.');
             return;
         }
         const updatedSpecs = updateSpecs(specs, changes);
-        core.info("updatedSpecs: " + JSON.stringify(updatedSpecs));
+        core.info('Updated specs:');
+        for (const spec of updatedSpecs) {
+            core.info(`${spec.source} -> ${spec.destination}`);
+        }
         return;
         syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
         const updatedYaml = yaml.dump(config, { lineWidth: -1 });
