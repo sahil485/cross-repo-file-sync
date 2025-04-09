@@ -36705,24 +36705,69 @@ const path = __importStar(__nccwpck_require__(1017));
 const yaml = __importStar(__nccwpck_require__(1917));
 const github = __importStar(__nccwpck_require__(5438));
 const CONFIG_PATH = path.join('.github', 'workflows', 'sync-openapi.yml');
-async function getBaseRef(octokit) {
-    const baseRef = process.env.GITHUB_BASE_REF;
-    if (!baseRef) {
-        throw new Error('GITHUB_BASE_REF not found. Are you running in a PR context?');
+async function run() {
+    try {
+        if (!fs.existsSync(CONFIG_PATH)) {
+            core.setFailed(`Config file not found at ${CONFIG_PATH}`);
+            return;
+        }
+        const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
+        const config = yaml.load(configRaw);
+        const syncStep = config.jobs.sync.steps?.find((step) => step.with?.openapi);
+        if (!syncStep.with) {
+            syncStep.with = {};
+        }
+        const openapiMapping = syncStep?.with?.openapi;
+        if (!openapiMapping) {
+            core.setFailed('Missing openapi block in sync job');
+            return;
+        }
+        const token = core.getInput('token') || process.env.GITHUB_TOKEN;
+        if (!token) {
+            throw new Error('GitHub token is required');
+        }
+        const octokit = github.getOctokit(token);
+        // Get base and head commits using github.event context for push events
+        const baseSha = github.context.payload.before;
+        const headSha = github.context.payload.after;
+        if (!baseSha || !headSha) {
+            core.setFailed('Could not determine base or head commit SHA');
+            return;
+        }
+        core.info(`Base commit: ${baseSha}`);
+        core.info(`Head commit: ${headSha}`);
+        const specs = parseOpenAPIBlock(openapiMapping);
+        if (specs.length === 0) {
+            core.info('No tracked files, skipping update.');
+            return;
+        }
+        let changes = await getDiffFiles(baseSha, headSha, octokit);
+        if (Object.keys(changes).length === 0) {
+            core.info('No tracked files were renamed/deleted, skipping update.');
+            return;
+        }
+        const updatedSpecs = updateSpecsToMap(specs, changes);
+        const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
+        fs.writeFileSync(CONFIG_PATH, updatedYaml);
+        await autoCommitAndPushChanges(octokit);
+        core.info('Successfully updated openapi-sync.yml');
     }
-    const { data: baseRefData } = await octokit.rest.repos.getBranch({
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
-        branch: baseRef,
-    });
-    return baseRefData.commit.sha;
+    catch (error) {
+        core.setFailed(error.message);
+    }
 }
-async function getDiffFiles(baseRef, octokit) {
-    const headSha = github.context.sha;
+function parseOpenAPIBlock(block) {
+    const parsed = yaml.load(block);
+    if (!Array.isArray(parsed)) {
+        return [];
+    }
+    return parsed;
+}
+async function getDiffFiles(baseSha, headSha, octokit) {
     const { data: compareData } = await octokit.rest.repos.compareCommits({
         owner: github.context.repo.owner,
         repo: github.context.repo.repo,
-        base: baseRef,
+        base: baseSha,
         head: headSha,
     });
     const diff = {};
@@ -36736,43 +36781,6 @@ async function getDiffFiles(baseRef, octokit) {
         }
     }
     return diff;
-}
-function parseOpenAPIBlock(block) {
-    const parsed = yaml.load(block);
-    if (!Array.isArray(parsed)) {
-        return [];
-    }
-    return parsed;
-}
-function formatOpenAPIBlock(specs) {
-    return specs.map(spec => `  - source: ${spec.source}\n    destination: ${spec.destination}`).join('\n');
-}
-function updateSpecs(specs, changes) {
-    const updated = [];
-    for (const spec of specs) {
-        const change = changes[spec.source];
-        if (!change) {
-            updated.push(spec);
-            continue;
-        }
-        if (change[0] === 'D') {
-            core.info(`[REMOVE] ${spec.source} in config.`);
-            continue; // skip deleted spec
-        }
-        if (change[0] === 'R') {
-            const [, oldPath, newPath] = change;
-            if (!newPath) {
-                core.warning(`Missing new path for renamed file: ${oldPath}`);
-                continue;
-            }
-            core.info(`[RENAME]${oldPath} -> ${newPath} in config.`);
-            updated.push({
-                source: newPath,
-                destination: spec.destination.replace(path.basename(spec.source), path.basename(newPath)),
-            });
-        }
-    }
-    return updated;
 }
 function updateSpecsToMap(specs, changes) {
     const updated = new Map();
@@ -36805,18 +36813,14 @@ function updateSpecsToMap(specs, changes) {
 }
 function replaceSpecsInYaml(updatedSpecs, yamlContent) {
     let updatedYaml = yamlContent;
-    // Process each spec update
     for (const [oldSpec, newSpec] of updatedSpecs.entries()) {
-        // Skip if there's no change
         if (oldSpec === newSpec)
             continue;
         if (newSpec === null) {
-            // Handle deletion: remove the entire entry for this spec
             const pattern = new RegExp(`\\s*- source:\\s*${escapeRegExp(oldSpec.source)}[^-]*?(?=\\s*-|$)`, 'gs');
             updatedYaml = updatedYaml.replace(pattern, '');
         }
         else {
-            // Handle rename: replace source and destination
             const sourcePattern = new RegExp(`(\\s*- source:\\s*)${escapeRegExp(oldSpec.source)}`, 'g');
             updatedYaml = updatedYaml.replace(sourcePattern, `$1${newSpec.source}`);
             const destPattern = new RegExp(`(\\s*destination:\\s*)${escapeRegExp(oldSpec.destination)}`, 'g');
@@ -36825,21 +36829,14 @@ function replaceSpecsInYaml(updatedSpecs, yamlContent) {
     }
     return updatedYaml;
 }
-// Helper function to escape special regex characters
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-async function autoCommitAndPushIfChanged(octokit) {
-    const isFork = github.context.payload.pull_request?.head.repo.full_name !== github.context.repo.owner + '/' + github.context.repo.repo;
-    if (isFork) {
-        core.warning('Skipping commit: PR is from a fork and push is not allowed.');
-        return;
-    }
-    // Read the file content
-    const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    const branch = github.context.payload.pull_request?.head.ref || process.env.GITHUB_HEAD_REF;
+async function autoCommitAndPushChanges(octokit) {
     try {
-        // Get the current file to check if it exists and get its SHA
+        const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
+        // For push events on main, we're already on the main branch
+        const branch = 'main';
         const response = await octokit.rest.repos.getContent({
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
@@ -36851,15 +36848,11 @@ async function autoCommitAndPushIfChanged(octokit) {
             throw new Error('Path exists but is not a file');
         }
         const fileSha = fileData.sha;
-        // Update the file
-        if (!branch) {
-            throw new Error('Could not find branch for PR.');
-        }
         await octokit.rest.repos.createOrUpdateFileContents({
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
             path: CONFIG_PATH,
-            message: 'chore: auto-update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
+            message: 'chore: update renamed/deleted files referenced in openapi-sync.yml [skip ci]',
             content: Buffer.from(content).toString('base64'),
             sha: fileSha,
             branch,
@@ -36872,56 +36865,10 @@ async function autoCommitAndPushIfChanged(octokit) {
                 email: 'github-actions@github.com',
             },
         });
-        core.info('Changes committed and pushed.');
+        core.info('Changes committed and pushed to main branch.');
     }
     catch (error) {
         throw error;
-    }
-}
-async function run() {
-    try {
-        if (!fs.existsSync(CONFIG_PATH)) {
-            core.setFailed(`Config file not found at ${CONFIG_PATH}`);
-            return;
-        }
-        const configRaw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-        const config = yaml.load(configRaw);
-        const syncStep = config.jobs.sync.steps?.find((step) => step.with?.openapi);
-        if (!syncStep.with) {
-            syncStep.with = {};
-        }
-        const openapiMapping = syncStep?.with?.openapi;
-        if (!openapiMapping) {
-            core.setFailed('Missing openapi block in sync job');
-            return;
-        }
-        const token = core.getInput('token') || process.env.GITHUB_TOKEN;
-        if (!token) {
-            throw new Error('GitHub token is required');
-        }
-        const octokit = github.getOctokit(token);
-        const baseRef = await getBaseRef(octokit);
-        const specs = parseOpenAPIBlock(openapiMapping);
-        if (specs.length === 0) {
-            core.info('No tracked files, skipping update.');
-            return;
-        }
-        let changes = await getDiffFiles(baseRef, octokit);
-        if (Object.keys(changes).length === 0) {
-            core.info('No tracked files were renamed/deleted, skipping update.');
-            return;
-        }
-        const updatedSpecs = updateSpecsToMap(specs, changes);
-        const updatedYaml = replaceSpecsInYaml(updatedSpecs, configRaw);
-        // const updatedSpecs = updateSpecs(specs, changes);
-        // syncStep.with.openapi = formatOpenAPIBlock(updatedSpecs);
-        // const updatedYaml = yaml.dump(config, { lineWidth: -1 });
-        fs.writeFileSync(CONFIG_PATH, updatedYaml);
-        await autoCommitAndPushIfChanged(octokit);
-        core.info('Successfully updated openapi-sync.yml');
-    }
-    catch (error) {
-        core.setFailed(error.message);
     }
 }
 run();
