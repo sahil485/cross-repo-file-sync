@@ -144,10 +144,7 @@ function updateSpecs(
         core.info(`[RENAME] ${oldPath} -> ${newPath} in config.`);
         updated.set(spec, {
           source: newPath,
-          destination: spec.destination.replace(
-            path.basename(spec.source),
-            path.basename(newPath)
-          ),
+          destination: spec.destination
         });
       }
     }
