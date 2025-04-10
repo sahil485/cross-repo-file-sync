@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - main # can be configured, currently runs on pushes to the 'main' branch of the source repository
 jobs:
   sync:
     runs-on: ubuntu-latest
