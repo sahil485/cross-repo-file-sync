@@ -1,6 +1,6 @@
-# Sync OpenAPI Action
+# Automated Cross-Repo File Sync
 
-A GitHub Action to sync OpenAPI specifications from your source repository to a target repository (like fern-config).
+A GitHub Action to sync files from a source repository to a target repository (like fern-config).
 
 ## Usage
 
@@ -22,7 +22,7 @@ jobs:
       - name: Sync OpenAPI spec to target repo
         uses: sahil485/sync-openapi-test@main
         with:
-          repository: fern-api/sync-openapi
+          repository: sahil485/cross-repo-file-sync@v0
           token: ${{ secrets.<PAT_TOKEN_NAME> }}
           files: |
             - source: path/to/first/source/file.yml
