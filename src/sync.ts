@@ -5,15 +5,17 @@ import * as io from '@actions/io';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import micromatch from 'micromatch';
 
-interface FileMapping {
-  source: string;
-  destination: string;
+interface Source {
+  from: string;
+  to: string;
+  exclude?: string[];
 }
 
 interface SyncOptions {
   repository: string;
-  openapi: FileMapping[];
+  sources: Source[];
   token?: string;
   branch?: string;
   autoMerge?: boolean;
@@ -26,32 +28,32 @@ export async function run(): Promise<void> {
     const branch = core.getInput('branch', { required: true });
     const autoMerge = core.getBooleanInput('auto_merge') || false;
     
-    const fileMappingInput = core.getInput('files', { required: true });
-    let fileMapping: FileMapping[];
+    const sourcesInput = core.getInput('sources', { required: true });
+    let sources: Source[];
     
     try {
-      fileMapping = yaml.load(fileMappingInput) as FileMapping[];
+      sources = yaml.load(sourcesInput) as Source[];
     } catch (yamlError) {
       try {
-        fileMapping = JSON.parse(fileMappingInput) as FileMapping[];
+        sources = JSON.parse(sourcesInput) as Source[];
       } catch (jsonError) {
-        throw new Error(`Failed to parse 'files' input as either YAML or JSON. Please check the format. Error: ${(yamlError as Error).message}`);
+        throw new Error(`Failed to parse 'sources' input as either YAML or JSON. Please check the format. Error: ${(yamlError as Error).message}`);
       }
     }
     
-    if (!Array.isArray(fileMapping) || fileMapping.length === 0) {
-      throw new Error('File mapping must be a non-empty array');
+    if (!Array.isArray(sources) || sources.length === 0) {
+      throw new Error('Sources mapping must be a non-empty array');
     }
     
-    for (const [index, mapping] of fileMapping.entries()) {
-      if (!mapping.source || !mapping.destination) {
-        throw new Error(`File mapping at index ${index} is missing required 'source' or 'destination' field`);
+    for (const [index, source] of sources.entries()) {
+      if (!source.from || !source.to) {
+        throw new Error(`Source mapping at index ${index} is missing required 'from' or 'to' field`);
       }
     }
     
     const options: SyncOptions = {
       repository,
-      openapi: fileMapping,
+      sources,
       token,
       branch,
       autoMerge
@@ -129,7 +131,7 @@ async function syncChanges(options: SyncOptions): Promise<void> {
     const doesBranchExist = await branchExists(owner, repo, workingBranch, octokit);
     await setupBranch(workingBranch, doesBranchExist);
 
-    await copyMappedFiles(options);
+    await copyMappedSources(options);
     
     const diff = await exec.getExecOutput('git', ['status', '--porcelain']);
   
@@ -178,8 +180,6 @@ async function setupBranch(branchName: string, exists: boolean): Promise<void> {
     if (exists) {
       core.info(`Branch ${branchName} exists. Checking it out.`);
       await exec.exec('git', ['checkout', branchName]);
-      // Pull latest changes from remote to avoid conflicts
-      await exec.exec('git', ['pull', 'origin', branchName], {silent: true});
     } else {
       core.info(`Branch ${branchName} does not exist. Creating it.`);
       await exec.exec('git', ['checkout', '-b', branchName]);
@@ -189,28 +189,87 @@ async function setupBranch(branchName: string, exists: boolean): Promise<void> {
   }
 }
 
-async function copyMappedFiles(options: SyncOptions): Promise<void> {
-  core.info('Copying mapped source files to destination locations');
+/**
+ * Copy all mapped sources (files or directories) to their destinations
+ */
+async function copyMappedSources(options: SyncOptions): Promise<void> {
+  core.info('Copying mapped sources to destination locations');
   
   const sourceRepoRoot = path.resolve(process.env.GITHUB_WORKSPACE || '');
   const destRepoRoot = path.resolve('.');
   
-  for (const mapping of options.openapi) {
-    const sourcePath = path.join(sourceRepoRoot, mapping.source);
-    const destPath = path.join(destRepoRoot, mapping.destination);
-          
+  for (const source of options.sources) {
+    const sourcePath = path.join(sourceRepoRoot, source.from);
+    const destPath = path.join(destRepoRoot, source.to);
+    
     if (!fs.existsSync(sourcePath)) {
-      throw new Error(`Source file ${mapping.source} not found`);
+      throw new Error(`Source path ${source.from} not found`);
+    }
+    
+    const sourceStats = fs.statSync(sourcePath);
+    
+    if (sourceStats.isDirectory()) {
+      await copyDirectory(sourcePath, destPath, source.exclude);
     } else {
-      await io.mkdirP(path.dirname(destPath));
-      fs.copyFileSync(sourcePath, destPath);
+      await copyFile(sourcePath, destPath);
     }
   }
 }
 
+/**
+ * Copy a file from source to destination
+ */
+async function copyFile(sourcePath: string, destPath: string): Promise<void> {
+  await io.mkdirP(path.dirname(destPath));
+  fs.copyFileSync(sourcePath, destPath);
+  core.info(`Copied file from ${sourcePath} to ${destPath}`);
+}
+
+/**
+ * Copy a directory recursively from source to destination
+ */
+async function copyDirectory(
+  sourceDir: string,
+  destDir: string,
+  excludePaths: string[] = [],
+  depth: number = 0
+): Promise<void> {
+  if (depth > 10) {
+    core.warning(`Max recursion depth exceeded at: ${sourceDir}`);
+    return;
+  }
+
+  await io.mkdirP(destDir);
+
+  const files = fs.readdirSync(sourceDir);
+
+  for (const file of files) {
+    const srcPath = path.join(sourceDir, file);
+    const dstPath = path.join(destDir, file);
+
+    const relativeSrcPath = path.relative(process.env.GITHUB_WORKSPACE || process.cwd(), srcPath);
+
+    // Skip if path matches any of the exclude patterns
+    if (micromatch.isMatch(relativeSrcPath, excludePaths)) {
+      core.info(`Skipping excluded path: ${relativeSrcPath}`);
+      continue;
+    }
+
+    const stats = fs.statSync(srcPath);
+
+    if (stats.isDirectory()) {
+      await copyDirectory(srcPath, dstPath, excludePaths, depth + 1);
+    } else {
+      await copyFile(srcPath, dstPath);
+    }
+  }
+
+  core.info(`Copied directory from ${sourceDir} to ${destDir}`);
+}
+
 async function commitChanges(): Promise<void> {
   await exec.exec('git', ['add', '.'], { silent: true });
-  await exec.exec('git', ['commit', '-m', `Sync OpenAPI files from ${github.context.repo.repo}`], { silent: true });
+  await exec.exec('git', ['commit', '-m', `Sync files from ${github.context.repo.repo}`], { silent: true });
 }
 
 async function hasDifferenceWithRemote(branchName: string): Promise<boolean> {
@@ -266,21 +325,21 @@ async function updatePR(octokit: any, owner: string, repo: string, prNumber: num
     owner,
     repo,
     pull_number: prNumber,
-    body: `Update OpenAPI specifications based on changes in the source repository.\nUpdated: ${new Date().toISOString()}`
+    body: `Update file specifications based on changes in the source repository.\nUpdated: ${new Date().toISOString()}`
   });
 }
 
 // Create a new PR
-async function createPR(octokit: any, owner: string, repo: string, branchName: string, targetBranch: string): Promise<any> {
-  core.info(`Creating new PR from ${branchName} to ${targetBranch}`);
+async function createPR(octokit: any, owner: string, repo: string, featureBranch: string, targetBranch: string): Promise<any> {
+  core.info(`Creating new PR from ${featureBranch} to ${targetBranch}`);
   
   const prResponse = await octokit.rest.pulls.create({
     owner,
     repo,
-    title: 'Update OpenAPI specifications',
-    head: branchName,
+    title: 'Update synced files',
+    head: featureBranch,
     base: targetBranch,
-    body: 'Update OpenAPI specifications based on changes in the source repository.'
+    body: 'Update file specifications based on changes in the source repository.'
   });
   
   core.info(`Pull request created: ${prResponse.data.html_url}`);
